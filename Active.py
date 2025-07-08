@@ -1,7 +1,7 @@
 
 import torch
 import matplotlib.pyplot as plt
-from LayerLearnSkeleton import VanillaNet , HeNet , SubsidyNet # Your imported model
+from LayerLearnSkeleton import VanillaNet ,  SubsidyNet 
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from Dataset import train_loader, test_loader
