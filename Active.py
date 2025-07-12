@@ -21,7 +21,7 @@ depths = list(range(2, 130))
 mean_squared_lengths = []
 
 # Get one batch
-images, _ = next(iter(train_loader))
+images, labels = next(iter(train_loader))
 
 input_dim = 784
 output_dim = 10
@@ -51,7 +51,8 @@ colors = {
     #"he_normal": 'white',
     #"he_uniform": 'black',
     #"he_truncated": 'white',
-    "subsidy": 'red'  # SubsidyNet color
+    "subsidy": 'red',  # SubsidyNet color
+    "subsidy2_mds" : 'purple'
 }
 
 linestyles = {
@@ -61,12 +62,14 @@ linestyles = {
     "he_uniform": ':',
     "he_truncated": (0, (5, 1)),
     # Red dotted line for SubsidyNet
-    "subsidy": (0, (1, 1))  
+    "subsidy": (0, (1, 1))  ,
+    "subsidy2_mds" : '-.',
 }
 
 #Storage for Results
 all_mds = {init_type: [] for init_type in init_types}
 all_mds["subsidy"] = []
+all_mds["subsidy2_mds"] = []
 
 #loop over depths and inits for VanillaNet
 for init_type in init_types:
@@ -105,10 +108,9 @@ subsidy2_mds = []
 
 import torch.nn as nn
 
-images, labels = next(iter(train_loader))  # Get one batch
-criterion = nn.CrossEntropyLoss()
 num_epochs = 1
-learning_rate = 1
+learning_rate = 0.001
+# Test learning_rate = 1.0
 for depth in depths:
     subsidy_model = SubsidyNet(input_dim, hidden_dims, output_dim)
     optimizer = torch.optim.Adam(subsidy_model.parameters(), lr=learning_rate)
@@ -121,38 +123,39 @@ for depth in depths:
             optimizer.zero_grad()
 
             if not subsidy_initialized:
-                # === First pass: no subsidy ===
+                # First pass: no subsidy 
                 outputs = subsidy_model(images, step=step, apply_subsidy=False)
                 loss = criterion(outputs, labels)
                 loss.backward()
 
-                # === Update metrics for subsidy allocation ===
+                #Update metrics for subsidy allocation 
                 subsidy_model.update_gradients()
 
-                # === Second pass: with subsidy ===
+                # Second pass: with subsidy 
                 optimizer.zero_grad()
                 outputs_subsidy = subsidy_model(images, step=step, apply_subsidy=True)
                 loss_subsidy = criterion(outputs_subsidy, labels)
                 loss_subsidy.backward()
                 optimizer.step()
 
-                # === Optional: final forward for logging metrics ===
+                # Optional: final forward for logging metrics 
                 metrics = subsidy_model.get_layer_metrics()
 
                 # Set the flag to avoid repeating
                 subsidy_initialized = True
             else:
-                # === Regular training with subsidy ===
+                # Regular training with subsidy
                 outputs = subsidy_model(images, step=step, apply_subsidy=True)
                 loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
-
+        
         step += 1
+        break
     
     subsidy2_mds.append(metrics['mean_squared_length'][-1])
 
-all_mds["subsidy"] = subsidy_mds
+all_mds["subsidy2_mds"] = subsidy2_mds
 
 #plot (Log scale)
 plt.figure(figsize=(12, 8))
@@ -177,7 +180,7 @@ plt.show()
 Here, this is just an experimental extra test metric basically, the consistency of variation from depth to depth,
 taking into account that the moving mean stays the same.
 """
-
+"""
 import numpy as np
 
 md_weighted_deviation_scores = {}
@@ -200,15 +203,4 @@ for init_type, mds in all_mds.items():
 for init_type, var_value in md_weighted_deviation_scores.items():
     print(f"{init_type}: Depth-weighted Deviation Score = {var_value:.6f}")
 
-"""
-# 4. Plot
-plt.figure(figsize=(8,6))
-plt.plot(depths, mean_squared_lengths, marker='o', label='Vanilla + ReLU')
-plt.yscale('log')
-plt.xlabel('Network Depth')
-plt.ylabel('Mean Squared Length (Md)')
-plt.title('Mean Squared Length vs Depth (Vanilla Net)')
-plt.legend()
-plt.grid(True)
-plt.show()
 """
