@@ -420,7 +420,8 @@ class SubsidyLinearV2(nn.Module):
         self.gamma = gamma
         self.decay_scheduler = decay_scheduler
         self.init_type = init_type
-
+        #Bool signal to communicate first round pass
+        self.firstRound = False
         # Apply initialization
         if init_type == "glorot_uniform":
             nn.init.xavier_uniform_(self.linear.weight)
@@ -443,18 +444,23 @@ class SubsidyLinearV2(nn.Module):
 
     def forward(self, x, current_step):
         z = self.linear(x)
+        if self.firstRound == True:
+            self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
+            self.activation_variance = torch.var(z, unbiased=False).item()
 
-        self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
-        self.activation_variance = torch.var(z, unbiased=False).item()
+            decay = self.decay_scheduler.get_decay(current_step) if self.decay_scheduler else 1.0
 
-        decay = self.decay_scheduler.get_decay(current_step) if self.decay_scheduler else 1.0
+            #Must compute backward pass before subsidy can be meaningfully computed (Hasn't been tested, )
+            #self.compute_gradient_info()
 
-        #Must compute backward pass before subsidy can be meaningfully computed (Hasn't been tested, )
-        self.compute_gradient_info()
+            #self.subsidy_value = allocate_subsidy_gradient(self.gradient_norm, self.epsilon, self.gamma, decay)
 
-        self.subsidy_value = allocate_subsidy_gradient(self.gradient_norm, self.epsilon, self.gamma, decay)
+            self.subsidy_value = allocate_subsidy(self.activation_variance, self.epsilon, self.gamma, decay)
 
-        z = z + self.subsidy_value
+            
+            z = z + self.subsidy_value
+        if self.firstRound == False:
+            self.firstRound = True
 
         return F.relu(z)
 
