@@ -421,7 +421,7 @@ class SubsidyLinearV2(nn.Module):
         self.decay_scheduler = decay_scheduler
         self.init_type = init_type
         #Bool signal to communicate first round pass
-        self.firstRound = False
+        #self.firstRound = False
         # Apply initialization
         if init_type == "glorot_uniform":
             nn.init.xavier_uniform_(self.linear.weight)
@@ -442,27 +442,19 @@ class SubsidyLinearV2(nn.Module):
         self.activation_variance = 0.0
         self.gradient_norm = 0.0
 
-    def forward(self, x, current_step):
+    def forward(self, x, current_step, apply_subsidy=False):
         z = self.linear(x)
-        if self.firstRound == True:
+
+        if apply_subsidy and not self.is_output_layer:
             self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
             self.activation_variance = torch.var(z, unbiased=False).item()
 
             decay = self.decay_scheduler.get_decay(current_step) if self.decay_scheduler else 1.0
-
-            #Must compute backward pass before subsidy can be meaningfully computed (Hasn't been tested, )
-            #self.compute_gradient_info()
-
-            #self.subsidy_value = allocate_subsidy_gradient(self.gradient_norm, self.epsilon, self.gamma, decay)
-
             self.subsidy_value = allocate_subsidy(self.activation_variance, self.epsilon, self.gamma, decay)
-
-            
             z = z + self.subsidy_value
-        if self.firstRound == False:
-            self.firstRound = True
 
-        return F.relu(z)
+        return z if self.is_output_layer else F.relu(z)
+
 
     def compute_gradient_info(self):
         if self.linear.weight.grad is not None:
@@ -480,15 +472,19 @@ class SubsidyNetV2(nn.Module):
         dims = [input_dim] + hidden_dims + [output_dim]
 
         for idx in range(len(dims) - 1):
+            is_output = (idx == len(dims) - 2) 
             self.layers.append(SubsidyLinearV2(dims[idx], dims[idx+1], layer_idx=idx,
                                                init_type=init_type,
                                                epsilon=epsilon, gamma=gamma,
-                                               decay_scheduler=self.decay_scheduler))
+                                               decay_scheduler=self.decay_scheduler,
+                                               is_output_layer=is_output))
 
-    def forward(self, x, step):
+    def forward(self, x, step,apply_subsidy=False):
+        
+        
         for layer in self.layers[:-1]:
-            x = layer(x, step)
-        x = self.layers[-1](x, step)
+            x = layer(x, step,apply_subsidy)
+        x = self.layers[-1](x, step,apply_subsidy)
         return x
 
     def update_gradients(self):
