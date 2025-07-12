@@ -412,7 +412,7 @@ def allocate_subsidy_gradient(grad_norm, epsilon, gamma, decay_value):
 
 #Layer
 class SubsidyLinearV2(nn.Module):
-    def __init__(self, in_features, out_features, layer_idx, init_type="glorot_uniform", epsilon=0.05, gamma=1.0, decay_scheduler=None):
+    def __init__(self, in_features, out_features, layer_idx, init_type="glorot_uniform", epsilon=0.05, gamma=1.0, decay_scheduler=None, is_output_layer=False):
         super(SubsidyLinearV2, self).__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.layer_idx = layer_idx
@@ -420,8 +420,9 @@ class SubsidyLinearV2(nn.Module):
         self.gamma = gamma
         self.decay_scheduler = decay_scheduler
         self.init_type = init_type
+        self.is_output_layer = is_output_layer
         #Bool signal to communicate first round pass
-        #self.firstRound = False
+        
         # Apply initialization
         if init_type == "glorot_uniform":
             nn.init.xavier_uniform_(self.linear.weight)
@@ -442,10 +443,10 @@ class SubsidyLinearV2(nn.Module):
         self.activation_variance = 0.0
         self.gradient_norm = 0.0
 
-    def forward(self, x, current_step, apply_subsidy=False):
+    def forward(self, x, current_step, apply_subsidy=False, initial_subsidy=False):
         z = self.linear(x)
-
-        if apply_subsidy and not self.is_output_layer:
+        
+        if apply_subsidy and (initial_subsidy or not self.is_output_layer):
             self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
             self.activation_variance = torch.var(z, unbiased=False).item()
 
@@ -464,7 +465,7 @@ class SubsidyLinearV2(nn.Module):
 
 #Network
 class SubsidyNetV2(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, init_type="he_normal", epsilon=0.05, gamma=1.0, beta=0.01):
+    def __init__(self, input_dim, hidden_dims, output_dim, init_type="glorot_normal", epsilon=0.05, gamma=1.0, beta=0.01):
         super(SubsidyNetV2, self).__init__()
         self.decay_scheduler = DecayScheduler(beta=beta)
         self.layers = nn.ModuleList()
@@ -479,12 +480,12 @@ class SubsidyNetV2(nn.Module):
                                                decay_scheduler=self.decay_scheduler,
                                                is_output_layer=is_output))
 
-    def forward(self, x, step,apply_subsidy=False):
+    def forward(self, x, step,apply_subsidy=False, initial_subsidy=False):
         
         
         for layer in self.layers[:-1]:
-            x = layer(x, step,apply_subsidy)
-        x = self.layers[-1](x, step,apply_subsidy)
+            x = layer(x, step,apply_subsidy,initial_subsidy)
+        x = self.layers[-1](x, step,apply_subsidy,initial_subsidy)
         return x
 
     def update_gradients(self):

@@ -39,7 +39,8 @@ init_types = [
     "glorot_normal",
     "he_normal",
     "he_uniform",
-    "he_truncated"
+    "he_truncated",
+    
 ]
 
 colors = {
@@ -51,8 +52,8 @@ colors = {
     #"he_normal": 'white',
     #"he_uniform": 'black',
     #"he_truncated": 'white',
-    "subsidy": 'red',  # SubsidyNet color
-    "subsidy2_mds" : 'purple'
+    "subsidy": 'yellow',  # SubsidyNet color
+    "subsidy2_mds" : 'red'
 }
 
 linestyles = {
@@ -63,7 +64,7 @@ linestyles = {
     "he_truncated": (0, (5, 1)),
     # Red dotted line for SubsidyNet
     "subsidy": (0, (1, 1))  ,
-    "subsidy2_mds" : '-.',
+    "subsidy2_mds" : 'solid',
 }
 
 #Storage for Results
@@ -98,33 +99,46 @@ for depth in depths:
     metrics = subsidy_model.get_layer_metrics()
     subsidy_mds.append(metrics['mean_squared_length'][-1])
 
+all_mds["subsidy"] = subsidy_mds
 
 
 # Trial Second version
 
 #loop over depths for SubsidyNet
-print(f"Running SubsidyNet (default init)")
+print(f"Running SubsidyNet Version 2 (default init)")
 subsidy2_mds = []
 
 import torch.nn as nn
+
+"""
+In the second version of SubsidyNet, the subsidy is applied only after the network has completed at least one forward and backward pass.
+This design choice is necessary because alternative learning indicators, such as Fisher Information and gradient norms, require gradients
+to be meaningful. To compute these gradients, we need to first run a complete training step.
+
+The overall flow is as follows:
+Random weight initialization → Forward pass → Loss computation → Backward pass → Gradient update → Subsidy application.
+"""
 
 num_epochs = 1
 learning_rate = 0.001
 # Test learning_rate = 1.0
 for depth in depths:
-    subsidy_model = SubsidyNet(input_dim, hidden_dims, output_dim)
+    #print("depth", depth)
+    subsidy_model = SubsidyNetV2(input_dim, hidden_dims, output_dim)
     optimizer = torch.optim.Adam(subsidy_model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
 
     step = 0
     subsidy_initialized = False
+    metrics  = []
     for epoch in range(num_epochs):
+        
         for images, labels in train_loader:
             optimizer.zero_grad()
 
             if not subsidy_initialized:
                 # First pass: no subsidy 
-                outputs = subsidy_model(images, step=step, apply_subsidy=False)
+                outputs = subsidy_model(images, step=step, apply_subsidy=False, initial_subsidy=True)
                 loss = criterion(outputs, labels)
                 loss.backward()
 
@@ -133,7 +147,7 @@ for depth in depths:
 
                 # Second pass: with subsidy 
                 optimizer.zero_grad()
-                outputs_subsidy = subsidy_model(images, step=step, apply_subsidy=True)
+                outputs_subsidy = subsidy_model(images, step=step, apply_subsidy=True,  initial_subsidy=True)
                 loss_subsidy = criterion(outputs_subsidy, labels)
                 loss_subsidy.backward()
                 optimizer.step()
@@ -145,22 +159,24 @@ for depth in depths:
                 subsidy_initialized = True
             else:
                 # Regular training with subsidy
-                outputs = subsidy_model(images, step=step, apply_subsidy=True)
+                outputs = subsidy_model(images, step=step, apply_subsidy=True,  initial_subsidy=False)
                 loss = criterion(outputs, labels)
                 loss.backward()
+                metrics = subsidy_model.get_layer_metrics()
                 optimizer.step()
+            break    
         
         step += 1
-        break
-    
+        
     subsidy2_mds.append(metrics['mean_squared_length'][-1])
 
 all_mds["subsidy2_mds"] = subsidy2_mds
 
 #plot (Log scale)
 plt.figure(figsize=(12, 8))
-
+print
 for init_type in list(all_mds.keys()):
+    print("Key=",init_type, "size =", len(all_mds[init_type]))
     plt.plot(depths, all_mds[init_type],
              label=init_type,
              color=colors[init_type],
