@@ -29,6 +29,7 @@ as well as the decay amount.
 
 
 """
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 
@@ -49,10 +50,10 @@ def init_he_uniform(layer):
 def init_he_normal_truncated(layer):
     if isinstance(layer, nn.Linear):
         fan_in = layer.weight.size(1)
-        std = torch.sqrt(torch.tensor(2.0 / fan_in))
+        std = torch.sqrt(torch.tensor(2.0 / fan_in)).to(layer.weight.device)
         with torch.no_grad():
             layer.weight.normal_(0, std)
-            layer.weight.clamp_(-2*std, 2*std)  # Truncate at 2 std dev
+            layer.weight.clamp_(-2*std, 2*std)
         nn.init.zeros_(layer.bias)
 
 # 4. Glorot Uniform (Xavier Uniform)
@@ -124,7 +125,7 @@ def allocate_subsidy(signal_value, epsilon, gamma, decay_value):
         over time or iterations, allowing the subsidy to gradually diminish
         as training progresses or as conditions improve.
     """
-    gap = max(0.0, epsilon - signal_value)
+    gap = max(0.0000001, epsilon - signal_value)
     return gamma * gap * decay_value
 
 
@@ -214,7 +215,8 @@ class SubsidyLinear(nn.Module):
             nn.init.uniform_(self.linear.bias, a=0.1, b=1.0)
         else:
             pass  # Default PyTorch init
-
+        
+        self.to(device)
         # Metrics for tracking
         self.subsidy_value = 0.0
         self.mean_squared_length = 0.0
@@ -250,13 +252,15 @@ class SubsidyNet(nn.Module):
         self.decay_scheduler = DecayScheduler(beta=beta)
         self.layers = nn.ModuleList()
         dims = [input_dim] + hidden_dims + [output_dim]
-
+        
         for idx in range(len(dims) - 1):
             self.layers.append(SubsidyLinear(dims[idx], dims[idx+1], layer_idx=idx, 
                                              init_type=init_type,
                                              epsilon=epsilon, gamma=gamma, decay_scheduler=self.decay_scheduler))
+        self.to(device)
 
     def forward(self, x, step):
+        x = x.to(device)
         for layer in self.layers[:-1]:
             x = layer(x, step)
         x = self.layers[-1](x, step)  # No ReLU at the end
@@ -308,7 +312,7 @@ class VanillaLinear(nn.Module):
         self.mean_squared_length = 0.0
         self.activation_variance = 0.0
         self.gradient_norm = 0.0
-
+        self.to(device)
     def forward(self, x):
         # pre-activation
         z = self.linear(x)  
@@ -344,8 +348,9 @@ class VanillaNet(nn.Module):
 
         for idx in range(len(dims) - 1):
             self.layers.append(VanillaLinear(dims[idx], dims[idx+1], init_type))
-
+        self.to(device)
     def forward(self, x):
+        x = x.to(device)
         for layer in self.layers[:-1]:
             x = layer(x)
         x = self.layers[-1](x) 
@@ -410,20 +415,25 @@ def allocate_subsidy_gradient(grad_norm, epsilon, gamma, decay_value):
     gap = max(0.0, epsilon - grad_norm)
     return gamma * gap * decay_value
 
-#Layer
 class SubsidyLinearV2(nn.Module):
-    def __init__(self, in_features, out_features, layer_idx, init_type="glorot_uniform", epsilon=0.05, gamma=1.0, decay_scheduler=None, is_output_layer=False):
+    def __init__(self, in_features, out_features, layer_idx, init_type="glorot_uniform", epsilon=0.05, gamma=1.0, decay_scheduler=None, is_output_layer=False, depth = 1):
         super(SubsidyLinearV2, self).__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.layer_idx = layer_idx
         self.epsilon = epsilon
-        self.gamma = gamma
+        #self.gamma = gamma
+        self.gamma = float(int(gamma) * depth)
         self.decay_scheduler = decay_scheduler
         self.init_type = init_type
         self.is_output_layer = is_output_layer
-        #Bool signal to communicate first round pass
+
+        # Add LayerNorm except for output layer
+        if not is_output_layer:
+            self.layer_norm = nn.LayerNorm(out_features)
+        else:
+            self.layer_norm = None
         
-        # Apply initialization
+        # Apply initialization (same as before)
         if init_type == "glorot_uniform":
             nn.init.xavier_uniform_(self.linear.weight)
         elif init_type == "glorot_normal":
@@ -446,16 +456,23 @@ class SubsidyLinearV2(nn.Module):
     def forward(self, x, current_step, apply_subsidy=False, initial_subsidy=False):
         z = self.linear(x)
         
+        # Apply layer norm if not output layer
+        if self.layer_norm is not None:
+            z = self.layer_norm(z)
+
         if apply_subsidy and (initial_subsidy or not self.is_output_layer):
             self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
-            self.activation_variance = torch.var(z, unbiased=False).item()
+            self.activation_variance = compute_activation_variance(z)
 
             decay = self.decay_scheduler.get_decay(current_step) if self.decay_scheduler else 1.0
             self.subsidy_value = allocate_subsidy(self.activation_variance, self.epsilon, self.gamma, decay)
-            z = z + self.subsidy_value
+            #print("Subsidy value",self.subsidy_value)
+            subsidy_vector = torch.full_like(z, self.subsidy_value / z.size(1))
+            z = z + subsidy_vector
+
+            #z = z + self.subsidy_value
 
         return z if self.is_output_layer else F.relu(z)
-
 
     def compute_gradient_info(self):
         if self.linear.weight.grad is not None:
@@ -463,11 +480,12 @@ class SubsidyLinearV2(nn.Module):
         else:
             self.gradient_norm = 0.0
 
+
 #Network
 class SubsidyNetV2(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, init_type="glorot_normal", epsilon=0.05, gamma=1.0, beta=0.01):
+    def __init__(self, input_dim, hidden_dims, output_dim, init_type="glorot_normal", epsilon=0.05, gamma=1.0, beta=0.01, depth =1):
         super(SubsidyNetV2, self).__init__()
-        self.decay_scheduler = DecayScheduler(beta=beta)
+        self.decay_scheduler = DecayScheduler(beta=beta,decay_type='exponential')
         self.layers = nn.ModuleList()
 
         dims = [input_dim] + hidden_dims + [output_dim]
@@ -478,7 +496,7 @@ class SubsidyNetV2(nn.Module):
                                                init_type=init_type,
                                                epsilon=epsilon, gamma=gamma,
                                                decay_scheduler=self.decay_scheduler,
-                                               is_output_layer=is_output))
+                                               is_output_layer=is_output, depth=depth))
 
     def forward(self, x, step,apply_subsidy=False, initial_subsidy=False):
         
@@ -502,3 +520,134 @@ class SubsidyNetV2(nn.Module):
             "activation_variance": act_vars,
             "gradient_norm": grad_norms,
         }
+
+
+#================================
+class SubsidyLinearV3(nn.Module):
+    def __init__(self, in_features, out_features, layer_idx, init_type="glorot_uniform",
+                 epsilon=0.05, decay_scheduler=None, is_output_layer=False):
+        super(SubsidyLinearV3, self).__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        self.layer_idx = layer_idx
+        self.epsilon = epsilon
+        self.decay_scheduler = decay_scheduler
+        self.is_output_layer = is_output_layer
+
+        self.layer_norm = nn.LayerNorm(out_features) if not is_output_layer else None
+
+        # Weight init
+        if init_type == "glorot_uniform":
+            nn.init.xavier_uniform_(self.linear.weight)
+        elif init_type == "glorot_normal":
+            nn.init.xavier_normal_(self.linear.weight)
+        elif init_type == "he_normal":
+            nn.init.kaiming_normal_(self.linear.weight, nonlinearity='relu')
+        elif init_type == "he_uniform":
+            nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
+
+        self.subsidy_value = 1e-10
+        self.activation_variance = 1e-7  
+        self.mean_squared_length = 0.0
+        self.gradient_norm = 0.0
+
+    def forward(self, x, current_step, apply_subsidy=False, initial_subsidy=False):
+        z = self.linear(x)
+
+        
+
+        if apply_subsidy and (initial_subsidy or not self.is_output_layer):
+            self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
+            # Here we can use other signals besides activation variance, like fisher info ..
+            self.activation_variance = compute_activation_variance(z)
+            #self.activation_variance =compute_gradient_norm(self.linear.weight.grad)
+            #subsidy_vector = torch.full_like(z, self.subsidy_value / z.size(1))
+            # = z + subsidy_vector
+            # Random tensor with small values, scaled by subsidy_value
+            noise = torch.randn_like(z) * 0.01  # or some other small scale
+            subsidy_vector = noise * self.subsidy_value
+
+            z = z + subsidy_vector
+
+            
+        if self.layer_norm is not None:
+            z = self.layer_norm(z)
+        return z if self.is_output_layer else F.relu(z)
+
+    def compute_gradient_info(self):
+        if self.linear.weight.grad is not None:
+            self.gradient_norm = torch.norm(self.linear.weight.grad, p=2).item()
+        else:
+            self.gradient_norm = 0.0
+
+    
+class SubsidyNetV3(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="he_uniform",
+                 epsilon=0.05, gamma=100.0, beta=0.01,):
+        super(SubsidyNetV3, self).__init__()
+        self.decay_scheduler = DecayScheduler(beta= (beta  * depth), decay_type='linear')
+        self.initialGamma = gamma
+        self.gamma = gamma
+        
+        self.epsilon = epsilon
+
+        dims = [input_dim] + hidden_dims + [output_dim]
+        self.layers = nn.ModuleList()
+
+        for idx in range(len(dims) - 1):
+            is_output = (idx == len(dims) - 2)
+            self.layers.append(SubsidyLinearV3(
+                in_features=dims[idx],
+                out_features=dims[idx + 1],
+                layer_idx=idx,
+                init_type=init_type,
+                epsilon=epsilon,
+                decay_scheduler=self.decay_scheduler,
+                is_output_layer=is_output
+            ))
+
+    def forward(self, x, step, apply_subsidy=False, initial_subsidy=False):
+
+        if self.training and apply_subsidy:
+            # Collect variances and normalize
+            act_vars = [layer.activation_variance for layer in self.layers]
+            total_var = sum(act_vars) + 1e-8
+            norm_weights = [v / total_var for v in act_vars]
+            #print("Min weight norm:", min(norm_weights)) 
+             
+            # Allocate subsidy
+            for layer, weight in zip(self.layers, norm_weights):
+                layer.subsidy_value = self.gamma * weight
+
+            # Apply decay after allocation
+            #decay = self.decay_scheduler.get_decay(step) if self.decay_scheduler else 1.0
+            #self.gamma *= decay
+        else:
+            for layer in self.layers:
+                layer.subsidy_value = 1e-10
+
+        # Forward pass
+        for layer in self.layers[:-1]:
+            x = layer(x, step, apply_subsidy=apply_subsidy, initial_subsidy=initial_subsidy)
+        x = self.layers[-1](x, step, apply_subsidy=apply_subsidy, initial_subsidy=initial_subsidy)
+        return x
+
+    def update_gradients(self):
+        for layer in self.layers:
+            layer.compute_gradient_info()
+
+    def get_layer_metrics(self):
+        mean_sq_lengths = [layer.mean_squared_length for layer in self.layers]
+        act_vars = [layer.activation_variance for layer in self.layers]
+        grad_norms = [layer.gradient_norm for layer in self.layers]
+
+        return {
+            "mean_squared_length": mean_sq_lengths,
+            "activation_variance": act_vars,
+            "gradient_norm": grad_norms,
+        }
+    def step_epoch(self, epoch):
+        print("Current gamma = ",self.gamma)
+        decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
+        self.gamma *= decay
+        print("Current gamma = ",self.gamma)
+

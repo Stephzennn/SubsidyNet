@@ -1,7 +1,7 @@
 
 import torch
 import matplotlib.pyplot as plt
-from LayerLearnSkeleton import VanillaNet ,  SubsidyNet ,SubsidyNetV2
+from LayerLearnSkeleton import VanillaNet ,  SubsidyNet ,SubsidyNetV2, SubsidyNetV3
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from Dataset import train_loader, test_loader
@@ -78,7 +78,8 @@ for init_type in init_types:
     mds = []
 
     for depth in depths:
-        hidden_dims = [hidden_dim] * depth
+        #hidden_dims = [hidden_dim] * depth
+        hidden_dims = [depth] * depth
         model = VanillaNet(input_dim, hidden_dims, output_dim, init_type=init_type)
         output = model(images)
         metrics = model.get_layer_metrics()
@@ -91,7 +92,8 @@ print(f"Running SubsidyNet (default init)")
 subsidy_mds = []
 
 for depth in depths:
-    hidden_dims = [hidden_dim] * depth
+    #hidden_dims = [hidden_dim] * depth
+    hidden_dims = [depth] * depth
     subsidy_model = SubsidyNet(input_dim, hidden_dims, output_dim)  
     #Here we will let the SubsidyNet go one round before computation
     #static decay (no training)
@@ -123,8 +125,11 @@ num_epochs = 1
 learning_rate = 0.001
 # Test learning_rate = 1.0
 for depth in depths:
+    #hidden_dims = [hidden_dim] * depth
+    hidden_dims = [depth] * depth
     #print("depth", depth)
     subsidy_model = SubsidyNetV2(input_dim, hidden_dims, output_dim)
+    subsidy_model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=10* depth )
     optimizer = torch.optim.Adam(subsidy_model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
 
@@ -174,7 +179,7 @@ all_mds["subsidy2_mds"] = subsidy2_mds
 
 #plot (Log scale)
 plt.figure(figsize=(12, 8))
-print
+
 for init_type in list(all_mds.keys()):
     print("Key=",init_type, "size =", len(all_mds[init_type]))
     plt.plot(depths, all_mds[init_type],
@@ -190,6 +195,7 @@ plt.legend(fontsize=11)
 plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 plt.tight_layout()
 plt.show()
+
 
 
 """
