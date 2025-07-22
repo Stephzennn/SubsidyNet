@@ -29,14 +29,14 @@ depths = list(range(2, 130))
 input_dim = 784
 output_dim = 10
 hidden_dim = 10
-target_acc = 0.20
-max_epochs = 20
+target_acc = 0.40
+max_epochs = 10
 learning_rate = 0.01
 
 init_types = [
-    "glorot_uniform",
     "he_uniform",
-    
+    "glorot_uniform",
+    "he_custom",
     "glorot_normal",
     "he_normal",
     
@@ -57,11 +57,11 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-#"""
+"""
 for init_type in init_types:
     print(f"[VanillaNet] Init: {init_type}")
     
-    for depth in range(5, max(depths) + 1, 5):
+    for depth in range(35, max(depths) + 1, 5):
         #hidden_dim = depth  # You may want to decouple hidden_dim and depth
         hidden_dims = [depth] * depth
         run_epochs = []
@@ -158,8 +158,8 @@ for depth in depths:
 
     if not reached:
         epochs_to_20_acc["subsidy"].append(max_epochs + 1)
-#"""
-print("[SubsidyNetV2] With Gradient-Based Subsidy")
+"""
+print("[SubsidyNetV3] With Gradient-Based Subsidy")
 
 subsidy_results = []  # list to store (depth, mean_epochs)
 
@@ -174,7 +174,7 @@ for depth in range(15, max(depths) + 1, 10):
         np.random.seed(seed)
         random.seed(seed)
 
-        model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=10* depth ).to(device) #,depth=depths
+        model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma= depth  ).to(device) #,depth=depths 
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         criterion = nn.CrossEntropyLoss()
         subsidy_initialized = False
@@ -205,7 +205,7 @@ for depth in range(15, max(depths) + 1, 10):
                     subsidy_initialized = True
                 else:
                     optimizer.zero_grad()
-                    outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=False)
+                    outputs = model(images, step=step, apply_subsidy=False, initial_subsidy=False)
                     loss = criterion(outputs, labels)
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)

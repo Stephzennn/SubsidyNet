@@ -295,14 +295,22 @@ class VanillaLinear(nn.Module):
         # Apply selected initialization
         if init_type == "glorot_uniform":
             init_glorot_uniform(self.linear)
+            #init_glorot_uniform(self.linear.bias)
         elif init_type == "glorot_normal":
             init_glorot_normal(self.linear)
+            #init_glorot_normal(self.linear.bias)
         elif init_type == "he_normal":
             init_he_normal(self.linear)
+            #init_he_normal(self.linear.bias) 
         elif init_type == "he_uniform":
             init_he_uniform(self.linear)
+            #init_he_uniform(self.linear.bias)
         elif init_type == "he_truncated":
             init_he_normal_truncated(self.linear)
+            #init_he_normal_truncated(self.linear.bias)
+        elif init_type == "he_custom":
+            self.init_he_normal_full(self.linear)
+            #self.init_he_normal_full(self.linear.bias)
         elif init_type == "bad_uniform":
             nn.init.uniform_(self.linear.weight, a=0.1, b=1.0)
             nn.init.uniform_(self.linear.bias, a=0.1, b=1.0)
@@ -313,6 +321,16 @@ class VanillaLinear(nn.Module):
         self.activation_variance = 0.0
         self.gradient_norm = 0.0
         self.to(device)
+    @staticmethod
+    def init_he_normal_full(layer):
+        if isinstance(layer, nn.Linear):
+            fan_in = layer.weight.size(1)  
+            std = (2.0 / fan_in) ** 0.5
+            with torch.no_grad():
+                layer.weight.normal_(0.0, std)  
+                if layer.bias is not None:
+                    layer.bias.zero_()
+
     def forward(self, x):
         # pre-activation
         z = self.linear(x)  
@@ -339,7 +357,7 @@ class VanillaLinear(nn.Module):
             self.gradient_norm = torch.norm(self.linear.weight.grad, p=2).item()
         else:
             self.gradient_norm = 0.0
-
+"""
 class VanillaNet(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim, init_type="he_normal"):
         super(VanillaNet, self).__init__()
@@ -361,12 +379,72 @@ class VanillaNet(nn.Module):
             layer.compute_gradient_info()
 
     def get_layer_metrics(self):
-        """
-        Returns dict with lists of metrics for all layers (same keys as HeNet for plotting).
-        """
+        
         mean_sq_lengths = [layer.mean_squared_length for layer in self.layers]
         act_vars = [layer.activation_variance for layer in self.layers]
         grad_norms = [layer.gradient_norm for layer in self.layers]
+
+        return {
+            "mean_squared_length": mean_sq_lengths,
+            "activation_variance": act_vars,
+            "gradient_norm": grad_norms,
+        }
+"""
+class VanillaNet(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim, init_type="he_normal"):
+        super(VanillaNet, self).__init__()
+        self.hidden_layers = nn.ModuleList()
+        dims = [input_dim] + hidden_dims
+
+        # Custom hidden layers
+        for idx in range(len(dims) - 1):
+            self.hidden_layers.append(VanillaLinear(dims[idx], dims[idx+1], init_type))
+
+        # Standard linear output layer
+        self.output_layer = nn.Linear(dims[-1], output_dim)
+        # Apply selected initialization
+        if init_type == "glorot_uniform":
+            init_glorot_uniform(self.output_layer)
+            #init_glorot_uniform(self.linear.bias)
+        elif init_type == "glorot_normal":
+            init_glorot_normal(self.output_layer)
+            #init_glorot_normal(self.linear.bias)
+        elif init_type == "he_normal":
+            init_he_normal(self.output_layer)
+            #init_he_normal(self.linear.bias) 
+        elif init_type == "he_uniform":
+            init_he_uniform(self.output_layer)
+            #init_he_uniform(self.linear.bias)
+        elif init_type == "he_truncated":
+            init_he_normal_truncated(self.output_layer)
+            #init_he_normal_truncated(self.linear.bias)
+        elif init_type == "he_custom":
+            self.init_he_normal_full(self.output_layer)
+            #self.init_he_normal_full(self.linear.bias)
+        elif init_type == "bad_uniform":
+            nn.init.uniform_(self.output_layer.weight, a=0.1, b=1.0)
+            nn.init.uniform_(self.output_layer.bias, a=0.1, b=1.0)
+        else:
+            # Default PyTorch init
+            pass  
+
+        self.to(device)
+
+    def forward(self, x):
+        x = x.to(device)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        x = self.output_layer(x)  
+        return x
+
+    def update_gradients(self):
+        for layer in self.hidden_layers:
+            layer.compute_gradient_info()
+
+    def get_layer_metrics(self):
+        mean_sq_lengths = [layer.mean_squared_length for layer in self.hidden_layers]
+        act_vars = [layer.activation_variance for layer in self.hidden_layers]
+        grad_norms = [layer.gradient_norm for layer in self.hidden_layers]
 
         return {
             "mean_squared_length": mean_sq_lengths,
@@ -428,10 +506,7 @@ class SubsidyLinearV2(nn.Module):
         self.is_output_layer = is_output_layer
 
         # Add LayerNorm except for output layer
-        if not is_output_layer:
-            self.layer_norm = nn.LayerNorm(out_features)
-        else:
-            self.layer_norm = None
+        self.layer_norm = nn.LayerNorm(out_features)
         
         # Apply initialization (same as before)
         if init_type == "glorot_uniform":
@@ -533,17 +608,33 @@ class SubsidyLinearV3(nn.Module):
         self.decay_scheduler = decay_scheduler
         self.is_output_layer = is_output_layer
 
-        self.layer_norm = nn.LayerNorm(out_features) if not is_output_layer else None
+        self.layer_norm = nn.LayerNorm(out_features) 
 
-        # Weight init
+        # Apply selected initialization
         if init_type == "glorot_uniform":
-            nn.init.xavier_uniform_(self.linear.weight)
-        elif init_type == "glorot_normal":
-            nn.init.xavier_normal_(self.linear.weight)
+            init_glorot_uniform(self.linear.weight)
+            init_glorot_uniform(self.linear.bias)
+        elif init_type == self.subsidy_value:
+            init_glorot_normal(self.linear.weight)
+            init_glorot_normal(self.linear.bias)
         elif init_type == "he_normal":
-            nn.init.kaiming_normal_(self.linear.weight, nonlinearity='relu')
+            init_he_normal(self.linear.weight)
+            init_he_normal(self.linear.bias) 
         elif init_type == "he_uniform":
-            nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
+            init_he_uniform(self.linear.weight)
+            init_he_uniform(self.linear.bias)
+        elif init_type == "he_truncated":
+            init_he_normal_truncated(self.linear.weight)
+            init_he_normal_truncated(self.linear.bias)
+        elif init_type == "he_custom":
+            self.init_he_normal_full(self.linear)
+            #self.init_he_normal_full(self.linear.bias)
+        elif init_type == "bad_uniform":
+            nn.init.uniform_(self.linear.weight, a=0.1, b=1.0)
+            nn.init.uniform_(self.linear.bias, a=0.1, b=1.0)
+        else:
+            # Default PyTorch init
+            pass  
 
         self.subsidy_value = 1e-10
         self.activation_variance = 1e-7  
@@ -551,27 +642,84 @@ class SubsidyLinearV3(nn.Module):
         self.gradient_norm = 0.0
 
     def forward(self, x, current_step, apply_subsidy=False, initial_subsidy=False):
-        z = self.linear(x)
-
         
-
-        if apply_subsidy and (initial_subsidy or not self.is_output_layer):
+        
+        z = self.linear(x)
+        
+        
+        #if x == x:
+        if apply_subsidy== True:
             self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
             # Here we can use other signals besides activation variance, like fisher info ..
-            self.activation_variance = compute_activation_variance(z)
-            #self.activation_variance =compute_gradient_norm(self.linear.weight.grad)
-            #subsidy_vector = torch.full_like(z, self.subsidy_value / z.size(1))
-            # = z + subsidy_vector
-            # Random tensor with small values, scaled by subsidy_value
-            noise = torch.randn_like(z) * 0.01  # or some other small scale
-            subsidy_vector = noise * self.subsidy_value
-
-            z = z + subsidy_vector
-
+            #self.activation_variance = compute_activation_variance(z)
+            #self.activation_variance =  compute_fisher_information(self.linear.weight)
+            self.activation_variance =  compute_gradient_norm(self.linear.weight)
             
+            #with torch.no_grad():
+            #    noise = torch.randn_like(self.linear.weight) * self.subsidy_value
+                #self.linear.weight += noise 
+            
+            #subsidized_weight = self.linear.weight + noise
+            #z = F.linear(x, subsidized_weight, self.linear.bias)
+            
+            #fisher_bias = compute_fisher_information(self.linear.bias)
+
+            #self.activation_variance =compute_gradient_norm(self.linear.weight.grad)
+            
+            # Random tensor with small values, scaled by subsidy_value
+            #noise = torch.randn_like(z) * 0.01  # or some other small scale
+            #subsidy_vector = noise * self.subsidy_value
+
+            #subsidy_strength = self.subsidy_value / self.activation_variance  # inverse weight importance
+            #subsidy_vector = noise * subsidy_strength 
+            #subsidy_vector = noise * subsidy_strength
+            # Inject controlled randomness based on subsidy_value
+
+            # Higher subsidy → more noise injected
+            #print("the subsidy", self.subsidy_value)
+            #z = F.relu(z)
+            #noise_scale = 1/ self.subsidy_value  
+            #noise = torch.randn_like(z) * noise_scale # self.subsidy_value  #noise_scale
+            #z = z + noise
+            
+            #z = z + self.subsidy_value #subsidy_vector
+            # Normalize z across features for each sample (row-wise)
+            #z_norm = z.norm(p=2, dim=1, keepdim=True) + 1e-8  
+            #z = z / z_norm
+            z_mean = z.mean(dim=1, keepdim=True)        # shape: (batch_size, 1)
+            z_std = z.std(dim=1, keepdim=True)  
+            #alive_ratio = (z > 0).float().mean().item()
+            #subsidy2 = (1- (alive_ratio + 1e-9)) * self.subsidy_value 
+            z = z +  self.subsidy_value 
+            z_upper_clip = z_mean + 2 * z_std
+            z = torch.minimum(z, z_upper_clip)
+            #z_std = z.std().item()
+            #subsidy = z_std * self.subsidy_value   
+            #if self.subsidy_value >= 0.05:
+            #subsidy_vector = torch.full_like(z, subsidy / z.size(1))
+            #    z_std = z.std().item()
+            
+            
+
+        
+        """
+        if apply_subsidy:
+            delta_W = torch.randn_like(self.linear.weight) * self.subsidy_value
+            delta_b = torch.randn_like(self.linear.bias) * self.subsidy_value
+            z = F.linear(x, self.linear.weight + delta_W, self.linear.bias + delta_b)
+        else:
+            z = self.linear(x)
+
         if self.layer_norm is not None:
-            z = self.layer_norm(z)
-        return z if self.is_output_layer else F.relu(z)
+            
+        
+        """
+        #z = self.layer_norm(z)
+        z = F.relu(z)
+        
+        #z = z +  self.subsidy_value
+        #return z if self.is_output_layer else F.relu(z)
+        return z
 
     def compute_gradient_info(self):
         if self.linear.weight.grad is not None:
@@ -579,10 +727,10 @@ class SubsidyLinearV3(nn.Module):
         else:
             self.gradient_norm = 0.0
 
-    
+"""
 class SubsidyNetV3(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="he_uniform",
-                 epsilon=0.05, gamma=100.0, beta=0.01,):
+    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_uniform",
+                 epsilon=0.05, gamma=100.0, beta=0.001,):
         super(SubsidyNetV3, self).__init__()
         self.decay_scheduler = DecayScheduler(beta= (beta  * depth), decay_type='linear')
         self.initialGamma = gamma
@@ -650,4 +798,96 @@ class SubsidyNetV3(nn.Module):
         decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
         self.gamma *= decay
         print("Current gamma = ",self.gamma)
+"""
 
+class SubsidyNetV3(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_uniform",
+                 epsilon=0.05, gamma=100.0, beta=0.001):
+        super(SubsidyNetV3, self).__init__()
+        self.decay_scheduler = DecayScheduler(beta=(beta * depth), decay_type='linear')
+        self.initialGamma = gamma
+        self.gamma = gamma
+        self.epsilon = epsilon
+
+        dims = [input_dim] + hidden_dims
+        self.layers = nn.ModuleList()
+
+        # Use SubsidyLinearV3 for hidden layers
+        for idx in range(len(dims) - 1):
+            self.layers.append(SubsidyLinearV3(
+                in_features=dims[idx],
+                out_features=dims[idx + 1],
+                layer_idx=idx,
+                init_type=init_type,
+                epsilon=epsilon,
+                decay_scheduler=self.decay_scheduler,
+                is_output_layer=False
+            ))
+
+        # Use a regular output layer
+        self.output_layer = nn.Linear(dims[-1], output_dim)
+        # Apply selected initialization
+        if init_type == "glorot_uniform":
+            init_glorot_uniform(self.output_layer)
+            #init_glorot_uniform(self.linear.bias)
+        elif init_type == "glorot_normal":
+            init_glorot_normal(self.output_layer)
+            #init_glorot_normal(self.linear.bias)
+        elif init_type == "he_normal":
+            init_he_normal(self.output_layer)
+            #init_he_normal(self.linear.bias) 
+        elif init_type == "he_uniform":
+            init_he_uniform(self.output_layer)
+            #init_he_uniform(self.linear.bias)
+        elif init_type == "he_truncated":
+            init_he_normal_truncated(self.output_layer)
+            #init_he_normal_truncated(self.linear.bias)
+        elif init_type == "he_custom":
+            self.init_he_normal_full(self.output_layer)
+            #self.init_he_normal_full(self.linear.bias)
+        elif init_type == "bad_uniform":
+            nn.init.uniform_(self.output_layer.weight, a=0.1, b=1.0)
+            nn.init.uniform_(self.output_layer.bias, a=0.1, b=1.0)
+        else:
+            # Default PyTorch init
+            pass  
+        
+        self.to(device)
+    def forward(self, x, step, apply_subsidy=False, initial_subsidy=False):
+        if self.training and apply_subsidy:
+            act_vars = [layer.activation_variance for layer in self.layers]
+            total_var = sum(act_vars) + 1e-8
+            norm_weights = [v / total_var for v in act_vars]
+            for layer, weight in zip(self.layers, norm_weights):
+                layer.subsidy_value = self.gamma * weight
+        else:
+            for layer in self.layers:
+                layer.subsidy_value = 0
+
+        # Forward through Subsidy layers
+        for layer in self.layers:
+            x = layer(x, step, apply_subsidy=apply_subsidy, initial_subsidy=initial_subsidy)
+
+        # Final linear layer
+        x = self.output_layer(x)
+
+        return x 
+    def update_gradients(self):
+        for layer in self.layers:
+            layer.compute_gradient_info()
+
+    def get_layer_metrics(self):
+        mean_sq_lengths = [layer.mean_squared_length for layer in self.layers]
+        act_vars = [layer.activation_variance for layer in self.layers]
+        grad_norms = [layer.gradient_norm for layer in self.layers]
+
+        return {
+            "mean_squared_length": mean_sq_lengths,
+            "activation_variance": act_vars,
+            "gradient_norm": grad_norms,
+        }
+    def step_epoch(self, epoch):
+        print("Current gamma = ",self.gamma)
+        decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
+        self.gamma *= decay
+        print("Current gamma = ",self.gamma)

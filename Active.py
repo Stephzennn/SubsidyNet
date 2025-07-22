@@ -6,6 +6,9 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from Dataset import train_loader, test_loader
 #Load vectorized MNIST
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Lambda(lambda x: x.view(-1))
@@ -128,8 +131,8 @@ for depth in depths:
     #hidden_dims = [hidden_dim] * depth
     hidden_dims = [depth] * depth
     #print("depth", depth)
-    subsidy_model = SubsidyNetV2(input_dim, hidden_dims, output_dim)
-    subsidy_model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=10* depth )
+    #subsidy_model = SubsidyNetV2(input_dim, hidden_dims, output_dim)
+    subsidy_model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=0.6* depth )
     optimizer = torch.optim.Adam(subsidy_model.parameters(), lr=learning_rate)
     criterion = nn.CrossEntropyLoss()
 
@@ -140,7 +143,8 @@ for depth in depths:
         
         for images, labels in train_loader:
             optimizer.zero_grad()
-
+            images = images.to(device)
+            labels = labels.to(device)
             if not subsidy_initialized:
                 # First pass: no subsidy 
                 outputs = subsidy_model(images, step=step, apply_subsidy=False, initial_subsidy=True)
