@@ -60,13 +60,13 @@ def init_he_normal_truncated(layer):
 
 def init_glorot_uniform(layer):
     if isinstance(layer, nn.Linear):
-        torch.nn.init.xavier_uniform_(layer.weight, gain=torch.nn.init.calculate_gain('relu'))
+        torch.nn.init.xavier_uniform_(layer.weight)
         nn.init.zeros_(layer.bias)
 
 
 def init_glorot_normal(layer):
     if isinstance(layer, nn.Linear):
-        torch.nn.init.xavier_normal_(layer.weight, gain=torch.nn.init.calculate_gain('relu'))
+        torch.nn.init.xavier_normal_(layer.weight)
         nn.init.zeros_(layer.bias)
 
 
@@ -651,7 +651,10 @@ class SubsidyLinearV3(nn.Module):
             # Default PyTorch init
             pass  
 
-        self.subsidy_value = 1e-10
+        if self.linear.bias is not None:
+            with torch.no_grad():
+                self.linear.bias.zero_()
+        self.subsidy_value = 0.0
         self.activation_variance = 1e-7  
         self.mean_squared_length = 0.0
         self.gradient_norm = 0.0
@@ -667,8 +670,8 @@ class SubsidyLinearV3(nn.Module):
             self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
             # Here we can use other signals besides activation variance, like fisher info ..
             #self.activation_variance = compute_activation_variance(z)
-            #self.activation_variance =  compute_fisher_information(self.linear.weight)
-            self.activation_variance =  compute_gradient_norm(self.linear.weight)
+            self.activation_variance =  compute_fisher_information(self.linear.weight)
+            #self.activation_variance =  compute_gradient_norm(self.linear.weight)
             
             #with torch.no_grad():
             #    noise = torch.randn_like(self.linear.weight) * self.subsidy_value
@@ -701,13 +704,14 @@ class SubsidyLinearV3(nn.Module):
             # Normalize z across features for each sample (row-wise)
             #z_norm = z.norm(p=2, dim=1, keepdim=True) + 1e-8  
             #z = z / z_norm
-            z_mean = z.mean(dim=1, keepdim=True)        # shape: (batch_size, 1)
-            z_std = z.std(dim=1, keepdim=True)  
+            #_mean = z.mean(dim=1, keepdim=True)        # shape: (batch_size, 1)
+            #z_std = z.std(dim=1, keepdim=True)  
             #alive_ratio = (z > 0).float().mean().item()
             #subsidy2 = (1- (alive_ratio + 1e-9)) * self.subsidy_value 
+            #print(self.subsidy_value)
             z = z +  self.subsidy_value 
-            z_upper_clip = z_mean + 2 * z_std
-            z = torch.minimum(z, z_upper_clip)
+            #z_upper_clip = z_mean + 2 * z_std
+            #z = torch.minimum(z, z_upper_clip)
             #z_std = z.std().item()
             #subsidy = z_std * self.subsidy_value   
             #if self.subsidy_value >= 0.05:
@@ -841,6 +845,7 @@ class SubsidyNetV3(nn.Module):
 
         # Use a regular output layer
         self.output_layer = nn.Linear(dims[-1], output_dim)
+
         # Apply selected initialization
         if init_type == "glorot_uniform":
             init_glorot_uniform(self.output_layer)
@@ -866,7 +871,9 @@ class SubsidyNetV3(nn.Module):
         else:
             # Default PyTorch init
             pass  
-        
+        if self.output_layer.bias is not None:
+            with torch.no_grad():
+                self.output_layer.bias.zero_()
         self.to(device)
     def forward(self, x, step, apply_subsidy=False, initial_subsidy=False):
         if self.training and apply_subsidy:
@@ -874,6 +881,7 @@ class SubsidyNetV3(nn.Module):
             total_var = sum(act_vars) + 1e-8
             norm_weights = [v / total_var for v in act_vars]
             for layer, weight in zip(self.layers, norm_weights):
+                
                 layer.subsidy_value = self.gamma * weight
         else:
             for layer in self.layers:
@@ -904,5 +912,6 @@ class SubsidyNetV3(nn.Module):
     def step_epoch(self, epoch):
         print("Current gamma = ",self.gamma)
         decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
+        print("Self. gamma, decay", self.gamma, decay)
         self.gamma *= decay
         print("Current gamma = ",self.gamma)

@@ -56,7 +56,7 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-#"""
+"""
 for init_type in init_types:
     print(f"[VanillaNet] Init: {init_type}")
     
@@ -158,13 +158,13 @@ for depth in depths:
 
     if not reached:
         epochs_to_20_acc["subsidy"].append(max_epochs + 1)
-#"""
+
 print("[SubsidyNetV3] With Gradient-Based Subsidy")
 
 subsidy_results = []  # list to store (depth, mean_epochs)
 
 #for depth in depths:
-for depth in range(15, max(depths) + 1, 10):
+for depth in range(20, max(depths) + 1, 10):
     hidden_dim = depth
     run_epochs = []
     
@@ -174,8 +174,9 @@ for depth in range(15, max(depths) + 1, 10):
         np.random.seed(seed)
         random.seed(seed)
 
-        model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma= depth  ).to(device) #,depth=depths 
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma= 0.6 *depth  ).to(device) #,depth=depths 
+        #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         subsidy_initialized = False
         reached = False
@@ -199,16 +200,16 @@ for depth in range(15, max(depths) + 1, 10):
                     outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=True)
                     loss = criterion(outputs, labels)
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
 
                     subsidy_initialized = True
                 else:
                     optimizer.zero_grad()
-                    outputs = model(images, step=step, apply_subsidy=False, initial_subsidy=False)
+                    outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=False)
                     loss = criterion(outputs, labels)
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
 
             # decay gamma once per epoch
@@ -242,6 +243,98 @@ for depth in range(15, max(depths) + 1, 10):
     epochs_to_20_acc["subsidy2_mds"].append(mean_epochs)
     print(f"Depth = {depth} | Mean epochs to reach {target_acc*100:.0f}% acc over {num_trials} runs = {mean_epochs:.2f}")
 
+#======================================================================================================================================
+"""
+#Test trial 3
+print("[SubsidyNetV3] With Gradient-Based Subsidy")
+subsidy_results = []  
+
+for depth in range(20, max(depths) + 1, 10):
+    hidden_dim = depth
+    run_epochs = []
+
+    for run in range(num_trials):
+        seed = 42 + run
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+
+        #Initialize model_init
+        model_init = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=0.6 * depth).to(device)
+        optimizer_init = torch.optim.SGD(model_init.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
+        criterion = nn.CrossEntropyLoss()
+
+        # One batch only
+        images, labels = next(iter(train_loader))
+        images, labels = images.to(device), labels.to(device)
+
+        # First forward-backward pass (no subsidy)
+        model_init.train()
+        outputs = model_init(images, step=0, apply_subsidy=False, initial_subsidy=True)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        model_init.update_gradients()
+        optimizer_init.zero_grad()
+
+        # Second forward-backward pass (with subsidy)
+        outputs = model_init(images, step=0, apply_subsidy=True, initial_subsidy=True)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer_init.step()
+
+        #Initialize model with copied weights
+        model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=0.6 * depth).to(device)
+        model.load_state_dict(model_init.state_dict())  
+        del model_init 
+
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
+        step = 1
+        reached = False
+
+        #Train as usual
+        for epoch in range(1, max_epochs + 1):
+            model.train()
+            for images, labels in train_loader:
+                images = images.to(device)
+                labels = labels.to(device)
+
+                optimizer.zero_grad()
+                outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=False)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+
+            model.step_epoch(depth)
+
+            # Evaluate
+            model.eval()
+            total_correct = 0
+            total_samples = 0
+            with torch.no_grad():
+                for images, labels in test_loader:
+                    images = images.to(device)
+                    labels = labels.to(device)
+                    outputs = model(images, step=step, apply_subsidy=False, initial_subsidy=False)
+                    total_correct += (outputs.argmax(dim=1) == labels).sum().item()
+                    total_samples += labels.size(0)
+
+            acc = total_correct / total_samples
+            print(f"[SubsidyNetV2] Run {run}, Epoch {epoch}, Test Accuracy: {acc:.4f}")
+
+            if acc >= target_acc:
+                run_epochs.append(epoch)
+                reached = True
+                break
+            step += 1
+
+        if not reached:
+            run_epochs.append(max_epochs + 1)
+
+    mean_epochs = np.mean(run_epochs)
+    subsidy_results.append((depth, mean_epochs))
+    epochs_to_20_acc["subsidy2_mds"].append(mean_epochs)
+    print(f"Depth = {depth} | Mean epochs to reach {target_acc*100:.0f}% acc over {num_trials} runs = {mean_epochs:.2f}")
+#===========================================================================================================================
 
 filename = "results/epochs_vs_depth_subsidy2_mds.csv"
 with open(filename, mode="w", newline="") as file:

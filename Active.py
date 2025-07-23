@@ -124,63 +124,74 @@ The overall flow is as follows:
 Random weight initialization → Forward pass → Loss computation → Backward pass → Gradient update → Subsidy application.
 """
 
+
+#===============================================================================================================================
 num_epochs = 1
-learning_rate = 0.001
-# Test learning_rate = 1.0
+learning_rate = 0.01
+
+subsidy2_mds = []
+
 for depth in depths:
-    #hidden_dims = [hidden_dim] * depth
-    hidden_dims = [depth] * depth
-    #print("depth", depth)
-    #subsidy_model = SubsidyNetV2(input_dim, hidden_dims, output_dim)
-    subsidy_model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=0.6* depth )
-    optimizer = torch.optim.Adam(subsidy_model.parameters(), lr=learning_rate)
+    hidden_dims = [hidden_dim] * depth
+
+    #Create initial model for gradient-based subsidy setup
+    init_model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma=0.5 * depth).to(device)
+    init_optimizer = torch.optim.SGD(init_model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
 
-    step = 0
-    subsidy_initialized = False
-    metrics  = []
+    # One batch for initializing subsidy
+    for images, labels in train_loader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        # First pass: no subsidy, just get gradients
+        init_optimizer.zero_grad()
+        outputs = init_model(images, step=0, apply_subsidy=False, initial_subsidy=True)
+        loss = criterion(outputs, labels)
+        loss.backward()
+
+        # Update subsidy internal state
+        init_model.update_gradients()
+
+        # Second pass: with subsidy
+        init_optimizer.zero_grad()
+        outputs_subsidy = init_model(images, step=0, apply_subsidy=True, initial_subsidy=True)
+        loss_subsidy = criterion(outputs_subsidy, labels)
+        loss_subsidy.backward()
+        init_optimizer.step()
+        break  
+
+    # 2. Create a second model and load initialized weights
+    train_model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma=0.5 * depth).to(device)
+    train_model.load_state_dict(init_model.state_dict())
+    del init_model  # Optional: free memory
+
+    # 3. Train using the second model
+    train_optimizer = torch.optim.SGD(train_model.parameters(), lr=learning_rate, momentum=0.0, weight_decay=1e-4)
+    metrics = []
+    step = 1  # Start at 1 since 0 was used in init_model
+
     for epoch in range(num_epochs):
-        
         for images, labels in train_loader:
-            optimizer.zero_grad()
             images = images.to(device)
             labels = labels.to(device)
-            if not subsidy_initialized:
-                # First pass: no subsidy 
-                outputs = subsidy_model(images, step=step, apply_subsidy=False, initial_subsidy=True)
-                loss = criterion(outputs, labels)
-                loss.backward()
 
-                #Update metrics for subsidy allocation 
-                subsidy_model.update_gradients()
+            train_optimizer.zero_grad()
+            outputs = train_model(images, step=step, apply_subsidy=True, initial_subsidy=False)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            train_optimizer.step()
+            train_model.step_epoch(depth)
+            metrics = train_model.get_layer_metrics()
+            break 
 
-                # Second pass: with subsidy 
-                optimizer.zero_grad()
-                outputs_subsidy = subsidy_model(images, step=step, apply_subsidy=True,  initial_subsidy=True)
-                loss_subsidy = criterion(outputs_subsidy, labels)
-                loss_subsidy.backward()
-                optimizer.step()
-
-                # Optional: final forward for logging metrics 
-                metrics = subsidy_model.get_layer_metrics()
-
-                # Set the flag to avoid repeating
-                subsidy_initialized = True
-            else:
-                # Regular training with subsidy
-                outputs = subsidy_model(images, step=step, apply_subsidy=True,  initial_subsidy=False)
-                loss = criterion(outputs, labels)
-                loss.backward()
-                metrics = subsidy_model.get_layer_metrics()
-                optimizer.step()
-            break    
-        
         step += 1
-        
+
     subsidy2_mds.append(metrics['mean_squared_length'][-1])
 
 all_mds["subsidy2_mds"] = subsidy2_mds
 
+#===============================================================================================================================
 #plot (Log scale)
 plt.figure(figsize=(12, 8))
 
