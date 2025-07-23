@@ -29,17 +29,16 @@ depths = list(range(2, 130))
 input_dim = 784
 output_dim = 10
 hidden_dim = 10
-target_acc = 0.40
+target_acc = 0.20
 max_epochs = 10
 learning_rate = 0.01
 
 init_types = [
+    "he_normal",
     "he_uniform",
     "glorot_uniform",
     "he_custom",
     "glorot_normal",
-    "he_normal",
-    
     "he_truncated",
 ]
 
@@ -57,22 +56,23 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-"""
+#"""
 for init_type in init_types:
     print(f"[VanillaNet] Init: {init_type}")
     
-    for depth in range(35, max(depths) + 1, 5):
+    for depth in range(40, max(depths) + 1, 5):
         #hidden_dim = depth  # You may want to decouple hidden_dim and depth
         hidden_dims = [depth] * depth
         run_epochs = []
 
         for run in range(num_trials):
-            seed = 42 + run  # change per run to vary but still deterministic
+            seed = 42 + run  
             torch.manual_seed(seed)
             np.random.seed(seed)
             random.seed(seed)
             model = VanillaNet(input_dim, [hidden_dim] * depth, output_dim, init_type=init_type).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+            optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
+            #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
             criterion = nn.CrossEntropyLoss()
             reached = False
 
@@ -158,7 +158,7 @@ for depth in depths:
 
     if not reached:
         epochs_to_20_acc["subsidy"].append(max_epochs + 1)
-"""
+#"""
 print("[SubsidyNetV3] With Gradient-Based Subsidy")
 
 subsidy_results = []  # list to store (depth, mean_epochs)

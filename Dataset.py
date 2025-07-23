@@ -3,10 +3,10 @@ import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split
 
-#Convert to tensor and flatten (28x28 → 784)
 transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Lambda(lambda x: x.view(-1))
+    transforms.ToTensor(),  # Converts to [0,1] and shape (1,28,28)
+    transforms.Normalize((0.1307,), (0.3081,)),  # Normalize MNIST with mean/std
+    transforms.Lambda(lambda x: x.view(-1))  # Flatten to shape (784,)
 ])
 
 #Check if MNIST data already exists

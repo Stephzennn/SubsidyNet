@@ -36,14 +36,16 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 1. He Normal (Kaiming Normal)
 def init_he_normal(layer):
     if isinstance(layer, nn.Linear):
-        nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
+        #nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
+        torch.nn.init.kaiming_normal_(layer.weight, mode='fan_in', nonlinearity='relu')
         nn.init.zeros_(layer.bias)
         
 
 # 2. He Uniform (Kaiming Uniform)
 def init_he_uniform(layer):
     if isinstance(layer, nn.Linear):
-        nn.init.kaiming_uniform_(layer.weight, nonlinearity='relu')
+        torch.nn.init.kaiming_uniform_(layer.weight, mode='fan_in', nonlinearity='relu')
+        #nn.init.kaiming_uniform_(layer.weight, nonlinearity='relu')
         nn.init.zeros_(layer.bias)
 
 # 3. He Normal Truncated (values clipped at 2 standard deviations)
@@ -56,17 +58,17 @@ def init_he_normal_truncated(layer):
             layer.weight.clamp_(-2*std, 2*std)
         nn.init.zeros_(layer.bias)
 
-# 4. Glorot Uniform (Xavier Uniform)
 def init_glorot_uniform(layer):
     if isinstance(layer, nn.Linear):
-        nn.init.xavier_uniform_(layer.weight)
+        torch.nn.init.xavier_uniform_(layer.weight, gain=torch.nn.init.calculate_gain('relu'))
         nn.init.zeros_(layer.bias)
 
-# 5. Glorot Normal (Xavier Normal)
+
 def init_glorot_normal(layer):
     if isinstance(layer, nn.Linear):
-        nn.init.xavier_normal_(layer.weight)
+        torch.nn.init.xavier_normal_(layer.weight, gain=torch.nn.init.calculate_gain('relu'))
         nn.init.zeros_(layer.bias)
+
 
 
 # ===== Decay Scheduler =====
@@ -288,13 +290,14 @@ class SubsidyNet(nn.Module):
 class VanillaLinear(nn.Module):
     def __init__(self, in_features, out_features, init_type="he_normal"):
         super(VanillaLinear, self).__init__()
-        self.linear = nn.Linear(in_features, out_features)
+        self.linear = nn.Linear(in_features, out_features,bias=True)
         # Store the initialization type as a string
         self.init_type = init_type  
 
         # Apply selected initialization
         if init_type == "glorot_uniform":
             init_glorot_uniform(self.linear)
+            
             #init_glorot_uniform(self.linear.bias)
         elif init_type == "glorot_normal":
             init_glorot_normal(self.linear)
@@ -317,6 +320,13 @@ class VanillaLinear(nn.Module):
         else:
             # Default PyTorch init
             pass  
+        #if self.linear.bias is not None:
+        #    self.linear.bias.data.zero_()
+
+        if self.linear.bias is not None:
+            with torch.no_grad():
+                self.linear.bias.zero_()
+
         self.mean_squared_length = 0.0
         self.activation_variance = 0.0
         self.gradient_norm = 0.0
@@ -402,6 +412,11 @@ class VanillaNet(nn.Module):
 
         # Standard linear output layer
         self.output_layer = nn.Linear(dims[-1], output_dim)
+
+        if self.output_layer.bias is not None:
+            with torch.no_grad():
+                self.output_layer.bias.zero_()
+
         # Apply selected initialization
         if init_type == "glorot_uniform":
             init_glorot_uniform(self.output_layer)
