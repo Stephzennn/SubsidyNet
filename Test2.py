@@ -25,22 +25,20 @@ print("Using device:", device)
 # ])
 
 # Settings
-depths = list(range(2, 130))
+depths = list(range(2, 65))
 input_dim = 784
 output_dim = 10
 hidden_dim = 10
 target_acc = 0.20
-max_epochs = 10
+max_epochs = 8
 learning_rate = 0.01
 
 init_types = [
     "glorot_normal",
     "he_normal",
-    
     "he_uniform",
     "glorot_uniform",
     "he_custom",
-    
     "he_truncated",
 ]
 
@@ -58,13 +56,13 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-"""
+#"""
 print("[VanillaNet] Baseline Runs")
 vanilla_results = []
 
 for init_type in init_types:
     print(f"[VanillaNet] Init: {init_type}")
-    for depth in range(60, max(depths) + 1, 10):
+    for depth in range(5, max(depths) + 1, 10):
         hidden_dims = [depth] * depth
         run_epochs = []
 
@@ -100,7 +98,7 @@ for init_type in init_types:
                         total_samples += labels.size(0)
 
                 acc = total_correct / total_samples
-                print(f"[VanillaNet-{init_type}] Run {run}, Epoch {epoch}, Test Accuracy: {acc:.4f}")
+                #print(f"[VanillaNet-{init_type}] Run {run}, Epoch {epoch}, Test Accuracy: {acc:.4f}")
 
                 if acc >= target_acc:
                     run_epochs.append(epoch)
