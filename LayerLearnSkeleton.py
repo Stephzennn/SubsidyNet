@@ -855,7 +855,7 @@ class SubsidyLinearV4(nn.Module):
         if self.training:
             eps = 1e-6
             fisher_info_clipped = min(max(self.activation_variance, eps), 1.0)
-            inverse_fisher_norm = fisher_info_clipped #1.0 - 
+            inverse_fisher_norm = 1.0 -  fisher_info_clipped #
             scaled_subsidy = roundSubsidy * inverse_fisher_norm
             # Compute mean and std of pre-activation z (over batch and features)
             z_mean = z.mean().item()
