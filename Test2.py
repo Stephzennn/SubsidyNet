@@ -29,8 +29,8 @@ depths = list(range(2, 130))
 input_dim = 784
 output_dim = 10
 hidden_dim = 10
-target_acc = 0.80
-max_epochs = 20
+target_acc = 0.20
+max_epochs = 10
 learning_rate = 0.01
 
 init_types = [
@@ -58,13 +58,13 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-#"""
+"""
 print("[VanillaNet] Baseline Runs")
 vanilla_results = []
 
 for init_type in init_types:
     print(f"[VanillaNet] Init: {init_type}")
-    for depth in range(20, max(depths) + 1, 10):
+    for depth in range(60, max(depths) + 1, 10):
         hidden_dims = [depth] * depth
         run_epochs = []
 
@@ -451,7 +451,7 @@ print("[SubsidyNetV3] Training with Persistent Gradient-Based Subsidy")
 
 subsidy_results = []
 
-for depth in range(10, max(depths) + 1, 10):
+for depth in range(60, max(depths) + 1, 10):
     hidden_dims = [depth] * depth
     run_epochs = []
 
@@ -462,7 +462,7 @@ for depth in range(10, max(depths) + 1, 10):
         random.seed(seed)
 
         # Single SubsidyNetV3 model for this run (no reinit)
-        model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma = 0.6 * depth).to(device)
+        model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma = depth * depth).to(device)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         reached = False
@@ -477,6 +477,7 @@ for depth in range(10, max(depths) + 1, 10):
                 outputs = model(images, step=epoch, apply_subsidy=True, initial_subsidy=False)
                 loss = criterion(outputs, labels)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 model.update_gradients()
                 optimizer.step()
             
