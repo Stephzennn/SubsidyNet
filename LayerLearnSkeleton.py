@@ -677,7 +677,7 @@ class SubsidyLinearV3(nn.Module):
             self.gradient_norm = 0.0
 
 class SubsidyNetV3(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_normal",
+    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_uniform",
                  epsilon=0.05, gamma=100.0, beta=0.01):
         super(SubsidyNetV3, self).__init__()
         self.decay_scheduler = DecayScheduler(beta=(beta * depth), decay_type='linear')

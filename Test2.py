@@ -17,12 +17,7 @@ from Dataset import train_loader, test_loader
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
-# Data preprocessing (already done in your loader presumably)
-# If you reinitialize loaders, add this:
-# transform = transforms.Compose([
-#     transforms.ToTensor(),
-#     transforms.Lambda(lambda x: x.view(-1))
-# ])
+
 
 # Settings
 depths = list(range(2, 65))
@@ -56,7 +51,7 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-#"""
+"""
 print("[VanillaNet] Baseline Runs")
 vanilla_results = []
 
@@ -449,7 +444,7 @@ print("[SubsidyNetV3] Training with Persistent Gradient-Based Subsidy")
 
 subsidy_results = []
 
-for depth in range(60, max(depths) + 1, 10):
+for depth in range(5, max(depths) + 1, 10):
     hidden_dims = [depth] * depth
     run_epochs = []
 
@@ -467,7 +462,7 @@ for depth in range(60, max(depths) + 1, 10):
 
         for epoch in range(1, max_epochs + 1):
             model.train()
-            print("Gamma", model.gamma)
+            #print("Gamma", model.gamma)
             for images, labels in train_loader:
                 images, labels = images.to(device), labels.to(device)
 
@@ -490,7 +485,7 @@ for depth in range(60, max(depths) + 1, 10):
                     total_samples += labels.size(0)
 
             acc = total_correct / total_samples
-            print(f"[SubsidyNetV3] Run {run}, Epoch {epoch}, Test Accuracy: {acc:.4f}")
+            #print(f"[SubsidyNetV3] Run {run}, Epoch {epoch}, Test Accuracy: {acc:.4f}")
             model.step_epoch(depth)
             if acc >= target_acc:
                 run_epochs.append(epoch)
@@ -506,7 +501,7 @@ for depth in range(60, max(depths) + 1, 10):
     print(f"Depth = {depth} | Mean epochs to reach {target_acc*100:.0f}% acc = {mean_epochs:.2f}")
 
 # Save results
-filename = "results/epochs_vs_depth_subsidy2_mds.csv"
+filename = "results/epochs_vs_depth_subsidy2_mds_glorot_uniform.csv"
 os.makedirs(os.path.dirname(filename), exist_ok=True)
 with open(filename, mode="w", newline="") as file:
     writer = csv.writer(file)
