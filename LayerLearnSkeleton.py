@@ -704,78 +704,8 @@ class SubsidyLinearV3(nn.Module):
         else:
             self.gradient_norm = 0.0
 
-"""
-class SubsidyNetV3(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_uniform",
-                 epsilon=0.05, gamma=100.0, beta=0.001,):
-        super(SubsidyNetV3, self).__init__()
-        self.decay_scheduler = DecayScheduler(beta= (beta  * depth), decay_type='linear')
-        self.initialGamma = gamma
-        self.gamma = gamma
-        
-        self.epsilon = epsilon
 
-        dims = [input_dim] + hidden_dims + [output_dim]
-        self.layers = nn.ModuleList()
 
-        for idx in range(len(dims) - 1):
-            is_output = (idx == len(dims) - 2)
-            self.layers.append(SubsidyLinearV3(
-                in_features=dims[idx],
-                out_features=dims[idx + 1],
-                layer_idx=idx,
-                init_type=init_type,
-                epsilon=epsilon,
-                decay_scheduler=self.decay_scheduler,
-                is_output_layer=is_output
-            ))
-
-    def forward(self, x, step, apply_subsidy=False, initial_subsidy=False):
-
-        if self.training and apply_subsidy:
-            # Collect variances and normalize
-            act_vars = [layer.activation_variance for layer in self.layers]
-            total_var = sum(act_vars) + 1e-8
-            norm_weights = [v / total_var for v in act_vars]
-            #print("Min weight norm:", min(norm_weights)) 
-             
-            # Allocate subsidy
-            for layer, weight in zip(self.layers, norm_weights):
-                layer.subsidy_value = self.gamma * weight
-
-            # Apply decay after allocation
-            #decay = self.decay_scheduler.get_decay(step) if self.decay_scheduler else 1.0
-            #self.gamma *= decay
-        else:
-            for layer in self.layers:
-                layer.subsidy_value = 1e-10
-
-        # Forward pass
-        for layer in self.layers[:-1]:
-            x = layer(x, step, apply_subsidy=apply_subsidy, initial_subsidy=initial_subsidy)
-        x = self.layers[-1](x, step, apply_subsidy=apply_subsidy, initial_subsidy=initial_subsidy)
-        return x
-
-    def update_gradients(self):
-        for layer in self.layers:
-            layer.compute_gradient_info()
-
-    def get_layer_metrics(self):
-        mean_sq_lengths = [layer.mean_squared_length for layer in self.layers]
-        act_vars = [layer.activation_variance for layer in self.layers]
-        grad_norms = [layer.gradient_norm for layer in self.layers]
-
-        return {
-            "mean_squared_length": mean_sq_lengths,
-            "activation_variance": act_vars,
-            "gradient_norm": grad_norms,
-        }
-    def step_epoch(self, epoch):
-        print("Current gamma = ",self.gamma)
-        decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
-        self.gamma *= decay
-        print("Current gamma = ",self.gamma)
-"""
 
 class SubsidyNetV3(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_normal",
@@ -806,37 +736,7 @@ class SubsidyNetV3(nn.Module):
         output_init_type = "he_normal"
         #init_glorot_normal(self.output_layer)
         init_he_normal(self.output_layer)
-        """
-        # Apply selected initialization
-        if init_type == "glorot_uniform":
-            init_glorot_uniform(self.output_layer)
-            #init_glorot_uniform(self.linear.bias)
-        elif init_type == "glorot_normal":
-            
-            #init_glorot_normal(self.linear.bias)
-        elif init_type == "he_normal":
-            init_he_normal(self.output_layer)
-            #init_he_normal(self.linear.bias) 
-        elif init_type == "he_uniform":
-            init_he_uniform(self.output_layer)
-            #init_he_uniform(self.linear.bias)
-        elif init_type == "he_truncated":
-            init_he_normal_truncated(self.output_layer)
-            #init_he_normal_truncated(self.linear.bias)
-        elif init_type == "he_custom":
-            self.init_he_normal_full(self.output_layer)
-            #self.init_he_normal_full(self.linear.bias)
-        elif init_type == "bad_uniform":
-            nn.init.uniform_(self.output_layer.weight, a=0.1, b=1.0)
-            nn.init.uniform_(self.output_layer.bias, a=0.1, b=1.0)
-        else:
-            # Default PyTorch init
-            pass  
-        if self.output_layer.bias is not None:
-            with torch.no_grad():
-                self.output_layer.bias.zero_()
-        """
-
+                     
         self.to(device)
     def forward(self, x, step, apply_subsidy=False, initial_subsidy=False):
         #if self.training and apply_subsidy:
