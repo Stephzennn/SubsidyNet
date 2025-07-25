@@ -10,7 +10,7 @@ import os
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
-from LayerLearnSkeleton import VanillaNet, SubsidyNet, SubsidyNetV2, SubsidyNetV3
+from LayerLearnSkeleton import VanillaNet, SubsidyNet, SubsidyNetV2, SubsidyNetV3,  SubsidyNetV4
 from Dataset import train_loader, test_loader
 
 # Use GPU if available
@@ -52,7 +52,7 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-#"""
+"""
 print("[VanillaNet] Baseline Runs")
 
 
@@ -459,7 +459,7 @@ for depth in range(5, max(depths) + 1, 10):
         random.seed(seed)
 
         # Single SubsidyNetV3 model for this run (no reinit)
-        model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma = 0.6 * depth).to(device)
+        model = SubsidyNetV4(input_dim, hidden_dims, output_dim, gamma = 0.1 * depth).to(device) #0.6 *
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         reached = False
@@ -505,7 +505,7 @@ for depth in range(5, max(depths) + 1, 10):
     print(f"Depth = {depth} | Mean epochs to reach {target_acc*100:.0f}% acc = {mean_epochs:.2f}")
 
 # Save results
-filename = "results/epochs_vs_depth_subsidy2_mds_he_uniform.csv"
+filename = "results/epochs_vs_depth_subsidyVersion4_mds_glorot_uniform.csv"
 os.makedirs(os.path.dirname(filename), exist_ok=True)
 with open(filename, mode="w", newline="") as file:
     writer = csv.writer(file)

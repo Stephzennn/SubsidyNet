@@ -855,7 +855,7 @@ class SubsidyLinearV4(nn.Module):
         if self.training:
             eps = 1e-6
             fisher_info_clipped = min(max(self.activation_variance, eps), 1.0)
-            inverse_fisher_norm = 1.0 -  fisher_info_clipped #
+            inverse_fisher_norm = 1.0 -  fisher_info_clipped 
             scaled_subsidy = roundSubsidy * inverse_fisher_norm
             # Compute mean and std of pre-activation z (over batch and features)
             z_mean = z.mean().item()
@@ -896,7 +896,7 @@ class SubsidyLinearV4(nn.Module):
 
 
 class SubsidyNetV4(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_normal",
+    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_uniform",
                  epsilon=0.05, gamma=100.0, beta=0.01):
         super(SubsidyNetV4, self).__init__()
         self.decay_scheduler = DecayScheduler(beta=(beta * depth), decay_type='linear')
