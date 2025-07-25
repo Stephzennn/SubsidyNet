@@ -29,8 +29,9 @@ max_epochs = 8
 learning_rate = 0.01
 
 init_types = [
-    "glorot_normal",
     "he_normal",
+    "glorot_normal",
+    
     "he_uniform",
     "glorot_uniform",
     "he_custom",
@@ -51,11 +52,12 @@ def compute_accuracy(outputs, labels):
 # --- VanillaNet ---
 num_trials = 5
 import random
-"""
+#"""
 print("[VanillaNet] Baseline Runs")
-vanilla_results = []
+
 
 for init_type in init_types:
+    vanilla_results = []
     print(f"[VanillaNet] Init: {init_type}")
     for depth in range(5, max(depths) + 1, 10):
         hidden_dims = [depth] * depth
@@ -108,13 +110,15 @@ for init_type in init_types:
         vanilla_results.append((depth, mean_epochs))
         print(f"Depth = {depth} | Mean epochs to reach {target_acc*100:.0f}% acc = {mean_epochs:.2f}")
 
-        # Save per-init-type results
-        os.makedirs("results", exist_ok=True)
-        filename = f"results/epochs_vs_depth_{init_type}.csv"
-        with open(filename, mode="w", newline="") as file:
-            writer = csv.writer(file)
-            writer.writerow(["depth", "mean_epochs"])
-            writer.writerows([(d, m) for d, m in vanilla_results if d == depth])
+        
+    # Save per-init-type results
+    print(vanilla_results)
+    os.makedirs("results", exist_ok=True)
+    filename = f"results/epochs_vs_depth_{init_type}.csv"
+    with open(filename, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["depth", "mean_epochs"])
+        writer.writerows(vanilla_results)
 
 print("Saved VanillaNet results.")
 
@@ -455,7 +459,7 @@ for depth in range(5, max(depths) + 1, 10):
         random.seed(seed)
 
         # Single SubsidyNetV3 model for this run (no reinit)
-        model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma = depth * depth).to(device)
+        model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma = 0.6 * depth).to(device)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         reached = False
@@ -501,7 +505,7 @@ for depth in range(5, max(depths) + 1, 10):
     print(f"Depth = {depth} | Mean epochs to reach {target_acc*100:.0f}% acc = {mean_epochs:.2f}")
 
 # Save results
-filename = "results/epochs_vs_depth_subsidy2_mds_glorot_uniform.csv"
+filename = "results/epochs_vs_depth_subsidy2_mds_he_uniform.csv"
 os.makedirs(os.path.dirname(filename), exist_ok=True)
 with open(filename, mode="w", newline="") as file:
     writer = csv.writer(file)
