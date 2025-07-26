@@ -20,11 +20,11 @@ print("Using device:", device)
 
 
 # Settings
-depths = list(range(2, 65))
+depths = list(range(2, 35))
 input_dim = 784
 output_dim = 10
 hidden_dim = 10
-target_acc = 0.20
+target_acc = 0.70
 max_epochs = 8
 learning_rate = 0.01
 
@@ -114,7 +114,7 @@ for init_type in init_types:
     # Save per-init-type results
     print(vanilla_results)
     os.makedirs("results", exist_ok=True)
-    filename = f"results/epochs_vs_depth_{init_type}.csv"
+    filename = f"results/epochs_vs_depth_80percent{init_type}.csv"
     with open(filename, mode="w", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(["depth", "mean_epochs"])
@@ -459,7 +459,7 @@ for depth in range(5, max(depths) + 1, 10):
         random.seed(seed)
 
         # Single SubsidyNetV3 model for this run (no reinit)
-        model = SubsidyNetV4(input_dim, hidden_dims, output_dim, gamma = 0.1 * depth).to(device) #0.6 *
+        model = SubsidyNetV4(input_dim, hidden_dims, output_dim, gamma = 0).to(device) #
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         reached = False
