@@ -479,8 +479,9 @@ class SubsidyNetV2(nn.Module):
             "gradient_norm": grad_norms,
         }
     
-    
+
 #below is version 3
+
 class SubsidyLinearV3(nn.Module):
     def __init__(self, in_features, out_features, layer_idx, init_type="he_uniform",
                  epsilon=0.05, decay_scheduler=None, is_output_layer=False):
@@ -491,9 +492,6 @@ class SubsidyLinearV3(nn.Module):
         self.decay_scheduler = decay_scheduler
         self.is_output_layer = is_output_layer
 
-        #self.layer_norm = nn.LayerNorm(out_features) 
-
-        # Apply selected initialization
         if init_type == "glorot_uniform":
             init_glorot_uniform(self.linear)
             
@@ -511,12 +509,12 @@ class SubsidyLinearV3(nn.Module):
            
         elif init_type == "he_custom":
             self.init_he_normal_full(self.linear)
-            #self.init_he_normal_full(self.linear.bias)
+            
         elif init_type == "bad_uniform":
             nn.init.uniform_(self.linear.weight, a=0.1, b=1.0)
             nn.init.uniform_(self.linear.bias, a=0.1, b=1.0)
         else:
-            # Default PyTorch init
+            
             pass  
 
        
@@ -530,11 +528,8 @@ class SubsidyLinearV3(nn.Module):
         self.mean_squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
         self.activation_variance = compute_activation_variance(z)
         if apply_subsidy and not initial_subsidy:
-            #self.activation_variance = compute_fisher_information(self.linear.weight)
             if self.subsidy_value != 0:
                 z = z + self.subsidy_value
-
-        #z = self.linear(x)  
         z = F.relu(z)
         return z
     def compute_gradient_info(self):
@@ -543,6 +538,14 @@ class SubsidyLinearV3(nn.Module):
         else:
             self.gradient_norm = 0.0
 
+"""
+One of the bugs we encountered was that we had inadvertently included a ReLU activation at the output layer.
+We initially attempted to fix this within the Linear class. However, the issue was deeper: while we apply the
+subsidy to hidden layers, we do not apply it to the output layer. Therefore, the output layer’s initialization
+should be handled separately, especially when using Glorot or other sub-optimal initializations. In this version,
+we separate the output layer from the Linear class and always use He initialization for its weights. This results
+in a more robust implementation.
+"""
 class SubsidyNetV3(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="he_uniform",
                  epsilon=0.05, gamma=100.0, beta=0.01):
@@ -555,7 +558,6 @@ class SubsidyNetV3(nn.Module):
         dims = [input_dim] + hidden_dims
         self.layers = nn.ModuleList()
 
-        # Use SubsidyLinearV3 for hidden layers
         for idx in range(len(dims) - 1):
             self.layers.append(SubsidyLinearV3(
                 in_features=dims[idx],
@@ -569,13 +571,12 @@ class SubsidyNetV3(nn.Module):
 
         # Use a regular output layer
         self.output_layer = nn.Linear(dims[-1], output_dim)
-        output_init_type = "he_normal"
-        #init_glorot_normal(self.output_layer)
+        
         init_he_normal(self.output_layer)
         
         self.to(device)
     def forward(self, x, step, apply_subsidy=False, initial_subsidy=False):
-        #if self.training and apply_subsidy:
+        
         if self.training and apply_subsidy and self.gamma > 0:
 
             act_vars = [layer.activation_variance for layer in self.layers]
@@ -611,11 +612,11 @@ class SubsidyNetV3(nn.Module):
             "gradient_norm": grad_norms,
         }
     def step_epoch(self, epoch):
-        #print("Current gamma = ",self.gamma)
+        
         decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
-        #print("Self. gamma, decay", self.gamma, decay)
+        
         self.gamma *= decay
-        #print("Current gamma = ",self.gamma)
+        
 
 
 
