@@ -290,7 +290,10 @@ class VanillaLinear(nn.Module):
         # pre-activation
         z = self.linear(x)  
         """
+        Here as we can see , we calculate the Mean Squared Length, at exactly the same place we do it for the SubsidyNet. 
+        They must be congruent so that we can compaer both of them.
         """
+
         # Compute Mean Squared Length (pre-activation)
         squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
         self.mean_squared_length = squared_length
@@ -310,43 +313,14 @@ class VanillaLinear(nn.Module):
         return a
 
     def compute_gradient_info(self):
+        """
+        This function is called from the outside after loss.backward ()
+        """
         if self.linear.weight.grad is not None:
             self.gradient_norm = torch.norm(self.linear.weight.grad, p=2).item()
         else:
             self.gradient_norm = 0.0
-"""
-class VanillaNet(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, init_type="he_normal"):
-        super(VanillaNet, self).__init__()
-        self.layers = nn.ModuleList()
-        dims = [input_dim] + hidden_dims + [output_dim]
 
-        for idx in range(len(dims) - 1):
-            self.layers.append(VanillaLinear(dims[idx], dims[idx+1], init_type))
-        self.to(device)
-    def forward(self, x):
-        x = x.to(device)
-        for layer in self.layers[:-1]:
-            x = layer(x)
-        x = self.layers[-1](x) 
-        return x
-
-    def update_gradients(self):
-        for layer in self.layers:
-            layer.compute_gradient_info()
-
-    def get_layer_metrics(self):
-        
-        mean_sq_lengths = [layer.mean_squared_length for layer in self.layers]
-        act_vars = [layer.activation_variance for layer in self.layers]
-        grad_norms = [layer.gradient_norm for layer in self.layers]
-
-        return {
-            "mean_squared_length": mean_sq_lengths,
-            "activation_variance": act_vars,
-            "gradient_norm": grad_norms,
-        }
-"""
 class VanillaNet(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim, init_type="he_normal"):
         super(VanillaNet, self).__init__()
@@ -364,33 +338,7 @@ class VanillaNet(nn.Module):
             with torch.no_grad():
                 self.output_layer.bias.zero_()
         init_he_normal(self.output_layer)
-        """
-        # Apply selected initialization
-        if init_type == "glorot_uniform":
-            init_glorot_uniform(self.output_layer)
-            #init_glorot_uniform(self.linear.bias)
-        elif init_type == "glorot_normal":
-            init_glorot_normal(self.output_layer)
-            #init_glorot_normal(self.linear.bias)
-        elif init_type == "he_normal":
-            init_he_normal(self.output_layer)
-            #init_he_normal(self.linear.bias) 
-        elif init_type == "he_uniform":
-            init_he_uniform(self.output_layer)
-            #init_he_uniform(self.linear.bias)
-        elif init_type == "he_truncated":
-            init_he_normal_truncated(self.output_layer)
-            #init_he_normal_truncated(self.linear.bias)
-        elif init_type == "he_custom":
-            self.init_he_normal_full(self.output_layer)
-            #self.init_he_normal_full(self.linear.bias)
-        elif init_type == "bad_uniform":
-            nn.init.uniform_(self.output_layer.weight, a=0.1, b=1.0)
-            nn.init.uniform_(self.output_layer.bias, a=0.1, b=1.0)
-        else:
-            # Default PyTorch init
-            pass  
-        """
+        
         self.to(device)
 
     def forward(self, x):
@@ -415,26 +363,6 @@ class VanillaNet(nn.Module):
             "gradient_norm": grad_norms,
         }
 
-
-
-"""
-model = SubsidyNet(input_dim=784, hidden_dims=[256, 256], output_dim=10, epsilon=0.1, gamma=1.0, beta=0.001)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-for epoch in range(num_epochs):
-    for batch_idx, (data, target) in enumerate(train_loader):
-        step = epoch * len(train_loader) + batch_idx
-        output = model(data, step)
-        loss = F.cross_entropy(output, target)
-        optimizer.zero_grad()
-        loss.backward()
-        model.update_gradients()  # Capture per-layer gradient norms
-        optimizer.step()
-
-
-
-"""
-
 #====================================================
 
 #Subsidy Allocation using Gradient Norm 
@@ -442,13 +370,19 @@ def allocate_subsidy_gradient(grad_norm, epsilon, gamma, decay_value):
     gap = max(0.0, epsilon - grad_norm)
     return gamma * gap * decay_value
 
+
+"""
+Below is SubsidyNet version 2. The main difference is that the subsidy is applied by scaling it with a randomly
+generated tensor matching the size of Z. This approach tests whether injecting randomness into the subsidy can
+help the model escape the local minima discussed earlier.
+"""
 class SubsidyLinearV2(nn.Module):
     def __init__(self, in_features, out_features, layer_idx, init_type="glorot_uniform", epsilon=0.05, gamma=1.0, decay_scheduler=None, is_output_layer=False, depth = 1):
         super(SubsidyLinearV2, self).__init__()
         self.linear = nn.Linear(in_features, out_features)
         self.layer_idx = layer_idx
         self.epsilon = epsilon
-        #self.gamma = gamma
+        
         self.gamma = float(int(gamma) * depth)
         self.decay_scheduler = decay_scheduler
         self.init_type = init_type
@@ -490,11 +424,11 @@ class SubsidyLinearV2(nn.Module):
 
             decay = self.decay_scheduler.get_decay(current_step) if self.decay_scheduler else 1.0
             self.subsidy_value = allocate_subsidy(self.activation_variance, self.epsilon, self.gamma, decay)
-            #print("Subsidy value",self.subsidy_value)
+            
             subsidy_vector = torch.full_like(z, self.subsidy_value / z.size(1))
             z = z + subsidy_vector
 
-            #z = z + self.subsidy_value
+            
 
         return z if self.is_output_layer else F.relu(z)
 
@@ -544,6 +478,7 @@ class SubsidyNetV2(nn.Module):
             "activation_variance": act_vars,
             "gradient_norm": grad_norms,
         }
+    
     
 #below is version 3
 class SubsidyLinearV3(nn.Module):
