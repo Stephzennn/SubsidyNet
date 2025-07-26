@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import math
 import torch.nn as nn
 import torch
 
@@ -36,7 +36,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 1. He Normal (Kaiming Normal)
 def init_he_normal(layer):
     if isinstance(layer, nn.Linear):
-        #nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
+        
         torch.nn.init.kaiming_normal_(layer.weight, mode='fan_in', nonlinearity='relu')
         nn.init.zeros_(layer.bias)
         
@@ -45,7 +45,7 @@ def init_he_normal(layer):
 def init_he_uniform(layer):
     if isinstance(layer, nn.Linear):
         torch.nn.init.kaiming_uniform_(layer.weight, mode='fan_in', nonlinearity='relu')
-        #nn.init.kaiming_uniform_(layer.weight, nonlinearity='relu')
+        
         nn.init.zeros_(layer.bias)
 
 # 3. He Normal Truncated (values clipped at 2 standard deviations)
@@ -79,7 +79,7 @@ class DecayScheduler:
 
     def get_decay(self, step):
         if self.decay_type == 'exponential':
-            #return torch.exp(-self.beta * step)
+           
             return torch.exp(torch.tensor(-self.beta * step, dtype=torch.float32))
 
         elif self.decay_type == 'linear':
@@ -90,6 +90,10 @@ class DecayScheduler:
 
 
 # Metric Functions 
+
+"""
+Below are function we use as a conduit or a signal for learning per layer.
+"""
 def compute_activation_variance(activations):
     return torch.var(activations, unbiased=False).item()
 
@@ -107,6 +111,7 @@ def compute_fisher_information(param):
 def normalize_fisher(FI_raw, min_val=0, max_val=90000):
     FI_clipped = max(min(FI_raw, max_val), min_val)
     return (FI_clipped - min_val) / (max_val - min_val)
+
 
 #Subsidy Allocation Function 
 def allocate_subsidy(signal_value, epsilon, gamma, decay_value):
@@ -162,9 +167,10 @@ class SubsidyLinear(nn.Module):
             nn.init.uniform_(self.linear.weight, a=0.1, b=1.0)
             nn.init.uniform_(self.linear.bias, a=0.1, b=1.0)
         else:
-            pass  # Default PyTorch init
+            pass  
         
         self.to(device)
+
         # Metrics for tracking
         self.subsidy_value = 0.0
         self.mean_squared_length = 0.0
@@ -211,7 +217,7 @@ class SubsidyNet(nn.Module):
         x = x.to(device)
         for layer in self.layers[:-1]:
             x = layer(x, step)
-        x = self.layers[-1](x, step)  # No ReLU at the end
+        x = self.layers[-1](x, step)  
         return x
 
     def update_gradients(self):
@@ -230,44 +236,37 @@ class SubsidyNet(nn.Module):
         }
 
 
-# ===== He-Initialized Linear Layer =====
+#Vanilla Layer Class that can use several initializations
 
 
 class VanillaLinear(nn.Module):
     def __init__(self, in_features, out_features, init_type="he_normal"):
         super(VanillaLinear, self).__init__()
         self.linear = nn.Linear(in_features, out_features,bias=True)
+
         # Store the initialization type as a string
         self.init_type = init_type  
 
         # Apply selected initialization
         if init_type == "glorot_uniform":
             init_glorot_uniform(self.linear)
-            
-            #init_glorot_uniform(self.linear.bias)
         elif init_type == "glorot_normal":
             init_glorot_normal(self.linear)
-            #init_glorot_normal(self.linear.bias)
         elif init_type == "he_normal":
             init_he_normal(self.linear)
-            #init_he_normal(self.linear.bias) 
         elif init_type == "he_uniform":
             init_he_uniform(self.linear)
-            #init_he_uniform(self.linear.bias)
         elif init_type == "he_truncated":
             init_he_normal_truncated(self.linear)
-            #init_he_normal_truncated(self.linear.bias)
         elif init_type == "he_custom":
             self.init_he_normal_full(self.linear)
-            #self.init_he_normal_full(self.linear.bias)
         elif init_type == "bad_uniform":
             nn.init.uniform_(self.linear.weight, a=0.1, b=1.0)
             nn.init.uniform_(self.linear.bias, a=0.1, b=1.0)
         else:
-            # Default PyTorch init
+            
             pass  
-        #if self.linear.bias is not None:
-        #    self.linear.bias.data.zero_()
+        
 
         if self.linear.bias is not None:
             with torch.no_grad():
@@ -290,7 +289,8 @@ class VanillaLinear(nn.Module):
     def forward(self, x):
         # pre-activation
         z = self.linear(x)  
-
+        """
+        """
         # Compute Mean Squared Length (pre-activation)
         squared_length = (z.pow(2).sum(dim=1) / z.size(1)).mean().item()
         self.mean_squared_length = squared_length
@@ -691,8 +691,11 @@ class SubsidyNetV3(nn.Module):
 
 
 #Below is version 4
-import math
+
 #================================
+"""
+The below is a trial testing, in reference of this paper {cite the paper}
+"""
 def compute_c_and_stats(layer, z,  x, depth):
     with torch.no_grad():
         # Pre-activation output z
@@ -797,17 +800,13 @@ class SubsidyLinearV4(nn.Module):
             """
             THE BELOW ARE THE DIFFERENT TRIALS WE ARE DOING
             fisher_info_clipped = min(max(self.activation_variance, eps), 1.0)  
-            
-            
             p = torch.clamp((z.var().item()), 0.0, 1.0)
             p = 1 -  p
-            
             scaled_subsidy =self.mean_squared_length
             Compute mean and std of pre-activation z (over batch and features)
             z_mean = z.mean().item()
             z_std = z.std().item()
             max_allowed_subsidy = z_mean + (z_std *2)
-
             # Clamp subsidy so it does not exceed mean + std
             if scaled_subsidy > max_allowed_subsidy:
                 scaled_subsidy = max_allowed_subsidy
@@ -928,67 +927,5 @@ class SubsidyNetV4(nn.Module):
         decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
         
         self.gamma *= decay
-        #print("Current gamma = ",self.gamma)
+        
 
-
-
-"""
-# ===== Subsidy Layer Version Old =====
-class SubsidyLinear(nn.Module):
-    def __init__(self, in_features, out_features, layer_idx, epsilon=0.05, gamma=1.0, decay_scheduler=None):
-        super(SubsidyLinear, self).__init__()
-        self.linear = nn.Linear(in_features, out_features)
-        self.layer_idx = layer_idx
-        self.epsilon = epsilon
-        self.gamma = gamma
-        self.decay_scheduler = decay_scheduler
-        self.subsidy_value = 0.0  # will update dynamically
-        self.activation_variance = 0.0
-        self.gradient_norm = 0.0
-
-    def forward(self, x, current_step):
-        # Measure pre-activation
-        z = self.linear(x)
-
-        # Compute activation variance
-        self.activation_variance = compute_activation_variance(z)
-
-        # Compute decay
-        decay = self.decay_scheduler.get_decay(current_step) if self.decay_scheduler else 1.0
-
-        # Allocate subsidy
-        self.subsidy_value = allocate_subsidy(self.activation_variance, self.epsilon, self.gamma, decay)
-
-        # Apply subsidy (pre-activation)
-        z = z + self.subsidy_value
-
-        # Apply activation
-        a = F.relu(z)
-        return a
-
-    def compute_gradient_info(self):
-        self.gradient_norm = compute_gradient_norm(self.linear.weight)
-
-# ===== Full Network =====
-class SubsidyNet(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, epsilon=0.05, gamma=1.0, beta=0.01):
-        super(SubsidyNet, self).__init__()
-        self.decay_scheduler = DecayScheduler(beta=beta)
-        self.layers = nn.ModuleList()
-        dims = [input_dim] + hidden_dims + [output_dim]
-
-        for idx in range(len(dims) - 1):
-            self.layers.append(SubsidyLinear(dims[idx], dims[idx+1], layer_idx=idx, 
-                                             epsilon=epsilon, gamma=gamma, decay_scheduler=self.decay_scheduler))
-
-    def forward(self, x, step):
-        for layer in self.layers[:-1]:
-            x = layer(x, step)
-        # Final layer without ReLU
-        x = self.layers[-1](x, step)
-        return x
-
-    def update_gradients(self):
-        for layer in self.layers:
-            layer.compute_gradient_info()
-"""
