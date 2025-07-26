@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import os
 
 base_dir = os.path.join(os.getcwd(), "results")
-# List of CSV filenames (without .csv extension)
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
@@ -11,7 +11,6 @@ import os
 # Base path
 base_dir = os.path.join(os.getcwd(), "results")
 
-# CSV filenames (without .csv)
 csv_names = [
     "epochs_vs_depth_80percenthe_normal",
     "epochs_vs_depth_glorot_normal",
@@ -22,7 +21,6 @@ csv_names = [
     "epochs_vs_depth_subsidyVersion4_mds_glorot_uniform"
 ]
 
-# Map component keywords to readable labels
 init_map = {
     "glorot_uniform": "Glorot Uniform",
     "glorot_normal": "Glorot Normal",
@@ -31,7 +29,7 @@ init_map = {
 }
 
 def generate_title(name: str) -> str:
-    # Determine base model type
+   
     if "subsidyVersion4" in name.lower():
         base = "Subsidy v4"
     elif "subsidy2" in name.lower():
@@ -41,7 +39,7 @@ def generate_title(name: str) -> str:
     else:
         base = "Vanilla"
 
-    # Determine initialization method
+    #Determine initialization method
     for key, label in init_map.items():
         if key in name.lower():
             init = label

@@ -3,16 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
-
 import csv
 import os
-
 from torchvision import transforms
 from torch.utils.data import DataLoader
-
 from LayerLearnSkeleton import VanillaNet, SubsidyNet, SubsidyNetV2, SubsidyNetV3,  SubsidyNetV4
 from Dataset import train_loader, test_loader
-
+import random
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
@@ -49,12 +46,11 @@ def compute_accuracy(outputs, labels):
     correct = (preds == labels).sum().item()
     return correct / labels.size(0)
 
-# --- VanillaNet ---
-num_trials = 5
-import random
-"""
-print("[VanillaNet] Baseline Runs")
 
+num_trials = 5
+
+
+print("[VanillaNet] Baseline Runs")
 
 for init_type in init_types:
     vanilla_results = []
@@ -95,7 +91,7 @@ for init_type in init_types:
                         total_samples += labels.size(0)
 
                 acc = total_correct / total_samples
-                #print(f"[VanillaNet-{init_type}] Run {run}, Epoch {epoch}, Test Accuracy: {acc:.4f}")
+                
 
                 if acc >= target_acc:
                     run_epochs.append(epoch)
@@ -123,7 +119,8 @@ for init_type in init_types:
 print("Saved VanillaNet results.")
 
 
-# --- SubsidyNet ---
+#SubsidyNet
+
 print("[SubsidyNet] Default Init")
 for depth in depths:
     model = SubsidyNet(input_dim, [hidden_dim] * depth, output_dim).to(device)
@@ -155,9 +152,8 @@ for depth in depths:
 
 print("[SubsidyNetV3] With Gradient-Based Subsidy")
 
-subsidy_results = []  # list to store (depth, mean_epochs)
+subsidy_results = [] 
 
-#for depth in depths:
 for depth in range(20, max(depths) + 1, 10):
     hidden_dim = depth
     run_epochs = []
@@ -168,7 +164,10 @@ for depth in range(20, max(depths) + 1, 10):
         np.random.seed(seed)
         random.seed(seed)
 
-        model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma= 0.6 *depth  ).to(device) #,depth=depths 
+        model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma= 0.6 *depth  ).to(device) 
+        """
+        In the paper "How to start training, the optimizer used is SGD , with learining rate of 0.01"
+        """
         #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
@@ -194,6 +193,9 @@ for depth in range(20, max(depths) + 1, 10):
                     outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=True)
                     loss = criterion(outputs, labels)
                     loss.backward()
+                    """
+                    The gradient clipping below may help limit the impact of the subsidy on exploding gradients.
+                    """
                     #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
 
@@ -203,6 +205,9 @@ for depth in range(20, max(depths) + 1, 10):
                     outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=False)
                     loss = criterion(outputs, labels)
                     loss.backward()
+                    """
+                    The gradient clipping below may help limit the impact of the subsidy on exploding gradients.
+                    """
                     #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
 
@@ -211,6 +216,9 @@ for depth in range(20, max(depths) + 1, 10):
 
             # Evaluation step
             model.eval()
+            """
+            Here model.eval, removes dropout and subsidy
+            """
             total_correct = 0
             total_samples = 0
             with torch.no_grad():
@@ -240,6 +248,12 @@ for depth in range(20, max(depths) + 1, 10):
 #======================================================================================================================================
 
 #Test trial 3
+
+"""
+In this trial, we test whether running SubsidyNet for a few epochs and then transferring its weights to a structurally identical
+Vanilla model can help overcome poor weight initialization.
+"""
+
 print("[SubsidyNetV3] With Gradient-Based Subsidy")
 subsidy_results = []  
 
@@ -266,7 +280,6 @@ for depth in range(30, max(depths) + 1, 10):
         model_init.train()
         outputs = model_init(images, step=0, apply_subsidy=False, initial_subsidy=True)
         loss = criterion(outputs, labels)
-        #loss.backward()
         loss.backward(retain_graph=True)
 
         model_init.update_gradients()
@@ -279,8 +292,8 @@ for depth in range(30, max(depths) + 1, 10):
         optimizer_init.step()
 
         #Initialize model with copied weights
-        #model = SubsidyNetV3(input_dim, [hidden_dim] * depth, output_dim, gamma=0.5 * depth).to(device)
-        model = VanillaNet(input_dim, [hidden_dim] * depth, output_dim, init_type="glorot_uniform")
+        
+        model = VanillaNet(input_dim, [hidden_dim] * depth, output_dim, init_type="glorot_uniform").to(device)
         model.load_state_dict(model_init.state_dict())  
         del model_init 
 
@@ -294,17 +307,15 @@ for depth in range(30, max(depths) + 1, 10):
             for images, labels in train_loader:
                 images = images.to(device)
                 labels = labels.to(device)
-
                 optimizer.zero_grad()
-                #outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=False)
+               
                 output = model(images)
                 loss = criterion(outputs, labels)
-                #loss.backward()
+                
                 loss.backward(retain_graph=True)
 
                 optimizer.step()
 
-            #model.step_epoch(depth)
 
             # Evaluate
             model.eval()
@@ -314,7 +325,6 @@ for depth in range(30, max(depths) + 1, 10):
                 for images, labels in test_loader:
                     images = images.to(device)
                     labels = labels.to(device)
-                    #outputs = model(images, step=step, apply_subsidy=False, initial_subsidy=False)
                     output = model(images)
                     total_correct += (outputs.argmax(dim=1) == labels).sum().item()
                     total_samples += labels.size(0)
@@ -344,11 +354,11 @@ with open(filename, mode="w", newline="") as file:
     writer.writerows(subsidy_results)
 print(f"Saved SubsidyNetV2 results to {filename}")
 
-# Done
-print("\n===> Finished measuring epochs to reach 20% accuracy.")
+print("\Finished measuring epochs to reach 20% accuracy.")
 
 
-#=========--------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------------------------------------------
+
 print("[SubsidyNetV3] With Gradient-Based Initialization")
 subsidy_results = []
 
@@ -439,12 +449,16 @@ with open(filename, mode="w", newline="") as file:
     writer.writerows(subsidy_results)
 
 print("Saved SubsidyNetV3-to-VanillaNet results.\n")
-#"""
-#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-#Trial 4
+#===============================================================================================================================
 
-print("[SubsidyNetV3] Training with Persistent Gradient-Based Subsidy")
+#Trial 4 
+
+"""
+This section of the test is an experimental version, we try out using scaled, normalized fisher information , as a learning signal per layer.
+"""
+
+print("[SubsidyNetV4] Training with Persistent Gradient-Based Subsidy, Fisher Information")
 
 subsidy_results = []
 
@@ -458,7 +472,7 @@ for depth in range(5, max(depths) + 1, 10):
         np.random.seed(seed)
         random.seed(seed)
 
-        # Single SubsidyNetV3 model for this run (no reinit)
+        # Single SubsidyNetV3 model for this run
         model = SubsidyNetV4(input_dim, hidden_dims, output_dim, gamma = 0).to(device) #
         optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
@@ -466,7 +480,7 @@ for depth in range(5, max(depths) + 1, 10):
 
         for epoch in range(1, max_epochs + 1):
             model.train()
-            #print("Gamma", model.gamma)
+            
             for images, labels in train_loader:
                 images, labels = images.to(device), labels.to(device)
 
@@ -489,7 +503,7 @@ for depth in range(5, max(depths) + 1, 10):
                     total_samples += labels.size(0)
 
             acc = total_correct / total_samples
-            #print(f"[SubsidyNetV3] Run {run}, Epoch {epoch}, Test Accuracy: {acc:.4f}")
+            
             model.step_epoch(depth)
             if acc >= target_acc:
                 run_epochs.append(epoch)
