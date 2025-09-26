@@ -749,7 +749,13 @@ class SubsidyLinearV4(nn.Module):
             scaled_subsidy = p
             z = z * (1.0 + scaled_subsidy)
             """
-            z = z + scaled_subsidy
+            z_std = z.std().item()
+            negative_mask = (z < 0).float()  # 1 where z < 0, 0 elsewhere
+            z_updated = z + scaled_subsidy * negative_mask
+            #z = z + self.subsidy_value * negative_mask
+            over_limit_mask = (z_updated > z_std) & (negative_mask.bool())
+            z = torch.where(over_limit_mask, z_std, z_updated)
+            z = z + self.subsidy_value
             
 
         """
@@ -791,7 +797,7 @@ class SubsidyLinearV4(nn.Module):
 
 
 class SubsidyNetV4(nn.Module):
-    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="glorot_normal",
+    def __init__(self, input_dim, hidden_dims, output_dim, depth=1, init_type="he_normal",
                  epsilon=0.05, gamma=100.0, beta=0.01):
         super(SubsidyNetV4, self).__init__()
         self.decay_scheduler = DecayScheduler(beta=(beta * depth), decay_type='linear')
@@ -865,3 +871,208 @@ class SubsidyNetV4(nn.Module):
         self.gamma *= decay
         
 
+import torch
+import torch.nn as nn
+from typing import List, Dict, Any, Optional
+
+# NOTE: The following names are expected to exist elsewhere in your codebase:
+# - DecayScheduler: schedules a multiplicative decay factor over epochs/steps
+# - SubsidyLinearV4: your custom linear layer that consumes `subsidy_value`
+# - init_he_normal: a He-normal initializer for nn.Linear
+# - `device` (optional): torch.device; if not defined, pass `device=` to the ctor
+
+
+class SubsidyNetV4(nn.Module):
+    """
+    A feed-forward network whose hidden layers are SubsidyLinearV4 blocks
+    that can receive a per-layer "subsidy" signal. The total subsidy budget
+    `gamma` is distributed across layers based on their activation variances.
+
+    Args
+    ----
+    input_dim : int
+        Dimensionality of the input.
+    hidden_dims : List[int]
+        Sizes of hidden layers (each becomes a SubsidyLinearV4).
+    output_dim : int
+        Dimensionality of the final prediction head (plain Linear).
+    depth : int, default=1
+        Used to scale the decay scheduler's beta as (beta * depth).
+    init_type : str, default="he_normal"
+        Initialization type passed to SubsidyLinearV4.
+    epsilon : float, default=0.05
+        Small constant many layers use internally (passed through).
+    gamma : float, default=100.0
+        Total subsidy budget to distribute across hidden layers while training.
+    beta : float, default=0.01
+        Base decay-rate factor; effective rate is (beta * depth).
+
+    Forward Flags
+    -------------
+    step : int
+        Training step index you propagate to the hidden layers.
+    apply_subsidy : bool
+        If True (and model is in .train() mode and gamma > 0),
+        distributes subsidy to hidden layers before the pass.
+    initial_subsidy : bool
+        Optional flag forwarded to SubsidyLinearV4 to treat the first rounds
+        of training differently (if that layer supports it).
+
+    Notes
+    -----
+    - Subsidy distribution is **variance-weighted**:
+        weight_i = activation_variance_i / sum_j activation_variance_j
+        subsidy_i = gamma * weight_i
+    - If subsidies are disabled, each layer gets 0.
+    - The output layer is a standard nn.Linear with He-normal init.
+    """
+
+    # ──────────────────────────────────────────────────────────────────────
+    # [A] Construction & hyper-parameters
+    # ──────────────────────────────────────────────────────────────────────
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dims: List[int],
+        output_dim: int,
+        depth: int = 1,
+        init_type: str = "he_normal",
+        epsilon: float = 0.05,
+        gamma: float = 100.0,
+        beta: float = 0.01,
+        device: Optional[torch.device] = None,
+    ):
+        super().__init__()
+
+        # [A1] Global knobs for subsidy behavior
+        self.initialGamma = float(gamma)     # keep a record of the starting budget
+        self.gamma = float(gamma)            # mutable budget (decays over time)
+        self.epsilon = float(epsilon)
+
+        # [A2] Decay scheduler for gamma (external component)
+        self.decay_scheduler = DecayScheduler(beta=(beta * depth), decay_type="linear")
+
+        # [A3] Layer layout
+        self.dims = [int(input_dim)] + [int(h) for h in hidden_dims]
+        self.layers = nn.ModuleList()
+
+        # ──────────────────────────────────────────────────────────────────
+        # [B] Build hidden stack from SubsidyLinearV4
+        # ──────────────────────────────────────────────────────────────────
+        for idx in range(len(self.dims) - 1):
+            self.layers.append(
+                SubsidyLinearV4(
+                    in_features=self.dims[idx],
+                    out_features=self.dims[idx + 1],
+                    layer_idx=idx,
+                    init_type=init_type,
+                    epsilon=self.epsilon,
+                    decay_scheduler=self.decay_scheduler,
+                    is_output_layer=False,
+                )
+            )
+
+        # ──────────────────────────────────────────────────────────────────
+        # [C] Output head (plain Linear) + initialization
+        # ──────────────────────────────────────────────────────────────────
+        self.output_layer = nn.Linear(self.dims[-1], output_dim)
+        init_he_normal(self.output_layer)
+
+        # [A4] Optional device placement
+        if device is not None:
+            self.to(device)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # [D] Forward pass: allocate subsidy (variance-weighted) and run layers
+    # ──────────────────────────────────────────────────────────────────────
+    def forward(
+        self,
+        x: torch.Tensor,
+        step: int = 1,
+        apply_subsidy: bool = False,
+        initial_subsidy: bool = False,
+    ) -> torch.Tensor:
+        """
+        Forward pass through all hidden SubsidyLinearV4 layers + output layer.
+
+        Important switches:
+        - If training AND apply_subsidy AND gamma > 0:
+            Distribute `self.gamma` across layers proportional to their
+            `activation_variance` attribute (expected to be updated by layers).
+        - Else:
+            Zero-out the per-layer `subsidy_value`.
+        """
+        # [D1] Decide & distribute subsidy
+        if self.training and apply_subsidy and (self.gamma > 0):
+            # Gather per-layer activation variances (assumed scalar floats)
+            act_vars = [float(getattr(layer, "activation_variance", 0.0)) for layer in self.layers]
+
+            # Robust normalization to avoid division-by-zero
+            total_var = sum(act_vars)
+            if total_var <= 0.0:
+                # Edge case: if we have no variance yet, distribute uniformly
+                norm_weights = [1.0 / max(len(self.layers), 1)] * len(self.layers)
+            else:
+                norm_weights = [v / total_var for v in act_vars]
+
+            # Assign each hidden layer its share of the subsidy budget
+            for layer, weight in zip(self.layers, norm_weights):
+                layer.subsidy_value = self.gamma * weight
+        else:
+            # No subsidies in eval mode or when disabled
+            for layer in self.layers:
+                layer.subsidy_value = 0.0
+
+        # [D2] Run hidden stack (each layer may consume `subsidy_value`)
+        #      We also pass a "roundSubsidy" convenience value.
+        num_hidden = max(len(self.layers), 1)
+        per_round_share = self.gamma / num_hidden
+        for layer in self.layers:
+            x = layer(
+                x,
+                step,
+                apply_subsidy=apply_subsidy,
+                initial_subsidy=initial_subsidy,
+                roundSubsidy=per_round_share,
+            )
+
+        # ──────────────────────────────────────────────────────────────────
+        # [F] Final projection
+        # ──────────────────────────────────────────────────────────────────
+        x = self.output_layer(x)
+        return x
+
+    # ──────────────────────────────────────────────────────────────────────
+    # [G] Utility: tell layers to snapshot/compute gradient diagnostics
+    # ──────────────────────────────────────────────────────────────────────
+    def update_gradients(self) -> None:
+        for layer in self.layers:
+            # Expects SubsidyLinearV4 to implement `compute_gradient_info()`
+            layer.compute_gradient_info()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # [H] Utility: collect per-layer diagnostics for logging/plots
+    # ──────────────────────────────────────────────────────────────────────
+    def get_layer_metrics(self) -> Dict[str, List[float]]:
+        mean_sq_lengths = [float(getattr(layer, "mean_squared_length", 0.0)) for layer in self.layers]
+        act_vars = [float(getattr(layer, "activation_variance", 0.0)) for layer in self.layers]
+        grad_norms = [float(getattr(layer, "gradient_norm", 0.0)) for layer in self.layers]
+
+        return {
+            "mean_squared_length": mean_sq_lengths,
+            "activation_variance": act_vars,
+            "gradient_norm": grad_norms,
+        }
+
+    # ──────────────────────────────────────────────────────────────────────
+    # [I] Scheduler step: decay the total subsidy budget `gamma`
+    # ──────────────────────────────────────────────────────────────────────
+    def step_epoch(self, epoch: int) -> None:
+        """
+        Update gamma with the decay factor provided by DecayScheduler.
+        Call this once per epoch (or however your training loop defines epochs).
+        """
+        decay = self.decay_scheduler.get_decay(epoch) if self.decay_scheduler else 1.0
+        self.gamma *= float(decay)
+        # (Optional) Clamp if you never want gamma to go negative due to FP noise:
+        # self.gamma = max(self.gamma, 0.0)
