@@ -417,8 +417,7 @@ leaky_model = LeakyReLUMlp(
 torch.manual_seed(SEED)
 subsidy_model = SubsidyMLP(
     input_dim=input_shape[0], hidden_dims=HIDDEN_DIMS, output_dim=num_classes,
-    # gamma=62.5: 25% increase over the previous gamma=50 baseline (scales every epoch's budget by 1.25x)
-    gamma=62.5, beta=0.01,
+    gamma=120.0, beta=0.01,
 ).to(device)
 
 torch.manual_seed(SEED)
