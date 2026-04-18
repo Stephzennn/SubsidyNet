@@ -3,9 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+"""
+This Test3.py file is not important, it is just an experimental file
 
-# === Initialization Functions ===
-
+"""
 def init_he_normal(layer):
     if isinstance(layer, nn.Linear):
         nn.init.kaiming_normal_(layer.weight, nonlinearity='relu')
@@ -35,8 +36,6 @@ def init_glorot_normal(layer):
         nn.init.xavier_normal_(layer.weight)
         nn.init.zeros_(layer.bias)
 
-# === Decay Scheduler ===
-
 class DecayScheduler:
     def __init__(self, decay_type='exponential', beta=0.01):
         self.decay_type = decay_type
@@ -49,8 +48,6 @@ class DecayScheduler:
             return max(0.0, 1 - self.beta * step)
         else:
             return 1.0
-
-# === Metric Functions ===
 
 def compute_activation_variance(activations):
     return torch.var(activations, unbiased=False).item()
@@ -66,8 +63,6 @@ def compute_fisher_information(param):
     grad = param.grad.view(-1)
     return torch.sum(grad ** 2).item()
 
-# === Subsidy Allocation ===
-
 def allocate_subsidy(signal_value, epsilon, gamma, decay_value):
     gap = max(0.0, epsilon - signal_value)
     return gamma * gap * decay_value
@@ -75,8 +70,6 @@ def allocate_subsidy(signal_value, epsilon, gamma, decay_value):
 def allocate_subsidy_gradient(grad_norm, epsilon, gamma, decay_value):
     gap = max(0.0, epsilon - grad_norm)
     return gamma * gap * decay_value
-
-# === SubsidyLinear (with device) ===
 
 class SubsidyLinear(nn.Module):
     def __init__(self, in_features, out_features, layer_idx, init_type="glorot_uniform", epsilon=0.05, gamma=1.0, decay_scheduler=None):
@@ -123,8 +116,6 @@ class SubsidyLinear(nn.Module):
         if self.linear.weight.grad is not None:
             self.gradient_norm = torch.norm(self.linear.weight.grad, p=2).item()
 
-# === SubsidyNet (device-aware) ===
-
 class SubsidyNet(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim, init_type="he_normal", epsilon=0.05, gamma=1.0, beta=0.01):
         super(SubsidyNet, self).__init__()
@@ -156,8 +147,6 @@ class SubsidyNet(nn.Module):
             "activation_variance": [l.activation_variance for l in self.layers],
             "gradient_norm": [l.gradient_norm for l in self.layers],
         }
-
-# === VanillaLinear and VanillaNet (with device) ===
 
 class VanillaLinear(nn.Module):
     def __init__(self, in_features, out_features, init_type="he_normal"):
