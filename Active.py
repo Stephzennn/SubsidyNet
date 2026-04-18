@@ -22,8 +22,9 @@ We will use depth like the one mentioned in the paper, this file tests, final la
 depths = list(range(2, 130))  
 mean_squared_lengths = []
 
-# Get one batch
+# Get one batch and move to device — models in LayerLearnSkeleton call .to(device) internally
 images, labels = next(iter(train_loader))
+images, labels = images.to(device), labels.to(device)
 
 input_dim = 784
 output_dim = 10
@@ -148,28 +149,21 @@ for depth in depths:
     loss.backward()
     init_optimizer.step()
 
-    #Load into VanillaNet
-    model = VanillaNet(input_dim, hidden_dims, output_dim, init_type="he_normal").to(device)
-    model.load_state_dict(init_model.state_dict())
-    del init_model
-
-    #Forward pass to collect gradient stats
-    model = SubsidyNetV3(input_dim, hidden_dims, output_dim, gamma=gamma).to(device)
-    model.load_state_dict(torch.load("temp.pth")) if os.path.exists("temp.pth") else None
-
+    # Continue training with the already-initialized init_model — the VanillaNet
+    # load + immediate overwrite was dead code (initialized weights were discarded)
+    model = init_model
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-    step = 1
-    criterion = nn.CrossEntropyLoss()
 
     model.train()
     for images, labels in train_loader:
         images, labels = images.to(device), labels.to(device)
         optimizer.zero_grad()
-        outputs = model(images, step=step, apply_subsidy=True, initial_subsidy=False)
+        outputs = model(images, step=1, apply_subsidy=True, initial_subsidy=False)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        model.step_epoch(depth)
+        # Pass epoch counter (1), not depth — passing depth zeroed gamma immediately
+        model.step_epoch(1)
         metrics = model.get_layer_metrics()
         break
 

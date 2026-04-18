@@ -2,11 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from torch.utils.data import TensorDataset, DataLoader
+from typing import List
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
 
 SEED = 0
 torch.manual_seed(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+
+# %% ---------- ThresholdReLU ----------
 
 class ThresholdReLUFn(torch.autograd.Function):
     @staticmethod
@@ -16,135 +21,66 @@ class ThresholdReLUFn(torch.autograd.Function):
         else:
             t = t.to(dtype=x.dtype, device=x.device)
         ctx.save_for_backward(x, t)
-        y = torch.where(x > t, x, torch.zeros_like(x))
-        return y
+        return torch.where(x > t, x, torch.zeros_like(x))
 
     @staticmethod
     def backward(ctx, grad_out):
         x, t = ctx.saved_tensors
         mask = (x > t).to(grad_out.dtype)
-        grad_x = grad_out * mask
-        # t is not learnable -> return None
-        return grad_x, None
+        return grad_out * mask, None
+
 
 class ThresholdReLU(nn.Module):
     def forward(self, x, threshold):
         return ThresholdReLUFn.apply(x, threshold)
 
-# quick test
-act = ThresholdReLU()
-x = torch.tensor([[-1.0, 0.0, 0.5, 2.0, 7.0, 5.5, 0.9]], requires_grad=True)
-t = 3.0
-y = act(x, t)         # -> [[0., 0., 0., 0., 7.0, 5.5, 0.]] (only values strictly > 3.0 pass)
-y.sum().backward()    # OK
 
 # %% ---------- data ----------
-# pip install torchvision if needed
-import torch
-from torch.utils.data import DataLoader, random_split, TensorDataset
-from torchvision import datasets, transforms
 
 SEED = 1337
 torch.manual_seed(SEED)
+
 class Flatten:
     def __call__(self, t: torch.Tensor) -> torch.Tensor:
         return t.view(-1)
+
 def get_loaders(
-    name="CIFAR10",
+    name="CIFAR100",
     data_dir="./data",
     batch_train=128,
     batch_val=256,
     val_frac=0.2,
     shuffle_train=True,
 ):
-    """
-    Returns loaders with each sample flattened to 1D for MLPs.
-    Also returns (num_classes, input_shape) where input_shape=(flat_dim,)
-    """
     name = name.upper()
     FlattenT = Flatten()
 
     if name in ["MNIST", "FASHIONMNIST"]:
-        # 1×28×28 grayscale
         if name == "MNIST":
             mean, std = (0.1307,), (0.3081,)
             DatasetClass = datasets.MNIST
-        else:  # FASHIONMNIST
+        else:
             mean, std = (0.2860,), (0.3530,)
             DatasetClass = datasets.FashionMNIST
-
-        T_train = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-            FlattenT,  # <---- flatten for MLP
-        ])
-        T_eval = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-            FlattenT,  # <---- flatten for MLP
-        ])
-
+        T_train = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std), FlattenT])
+        T_eval  = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std), FlattenT])
         full_train_aug  = DatasetClass(root=data_dir, train=True,  download=True, transform=T_train)
         full_train_eval = DatasetClass(root=data_dir, train=True,  download=True, transform=T_eval)
         test_ds         = DatasetClass(root=data_dir, train=False, download=True, transform=T_eval)
-
         num_classes, input_shape = 10, (1 * 28 * 28,)
 
-        # Split indices for train/val
-        n_val = int(len(full_train_aug) * val_frac)
-        n_tr  = len(full_train_aug) - n_val
-        gen = torch.Generator().manual_seed(SEED)
-        train_idx, val_idx = torch.utils.data.random_split(range(len(full_train_aug)), [n_tr, n_val], generator=gen)
-
-        train_ds = torch.utils.data.Subset(full_train_aug, train_idx.indices)
-        val_ds   = torch.utils.data.Subset(full_train_eval, val_idx.indices)
-
-        train_loader = DataLoader(train_ds, batch_size=batch_train, shuffle=shuffle_train,
-                                  num_workers=0, pin_memory=False)
-        val_loader   = DataLoader(val_ds,   batch_size=batch_val,   shuffle=False,
-                                  num_workers=0, pin_memory=False)
-        test_loader  = DataLoader(test_ds,  batch_size=batch_val,   shuffle=False,
-                                  num_workers=0, pin_memory=False)
-        return train_loader, val_loader, test_loader, num_classes, input_shape
-
     elif name in ["CIFAR10", "CIFAR-10"]:
-        # 3×32×32 RGB
         mean, std = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
-        T_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-            FlattenT,  # <---- flatten for MLP
-        ])
-        T_eval = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-            FlattenT,  # <---- flatten for MLP
-        ])
-
+        T_train = transforms.Compose([transforms.RandomCrop(32, padding=4), transforms.RandomHorizontalFlip(),
+                                      transforms.ToTensor(), transforms.Normalize(mean, std), FlattenT])
+        T_eval  = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std), FlattenT])
         full_train_aug  = datasets.CIFAR10(root=data_dir, train=True,  download=True, transform=T_train)
         full_train_eval = datasets.CIFAR10(root=data_dir, train=True,  download=True, transform=T_eval)
         test_ds         = datasets.CIFAR10(root=data_dir, train=False, download=True, transform=T_eval)
-
         num_classes, input_shape = 10, (3 * 32 * 32,)
 
-        n_val = int(len(full_train_aug) * val_frac)
-        n_tr  = len(full_train_aug) - n_val
-        gen = torch.Generator().manual_seed(SEED)
-        train_idx, val_idx = torch.utils.data.random_split(range(len(full_train_aug)), [n_tr, n_val], generator=gen)
-
-        train_ds = torch.utils.data.Subset(full_train_aug, train_idx.indices)
-        val_ds   = torch.utils.data.Subset(full_train_eval, val_idx.indices)
-
-        train_loader = DataLoader(train_ds, batch_size=batch_train, shuffle=shuffle_train, num_workers=0, pin_memory=False)
-        val_loader   = DataLoader(val_ds,   batch_size=batch_val,   shuffle=False,        num_workers=0, pin_memory=False)
-        test_loader  = DataLoader(test_ds,  batch_size=batch_val,   shuffle=False,        num_workers=0, pin_memory=False)
-        return train_loader, val_loader, test_loader, num_classes, input_shape
-
     elif name in ["CIFAR100", "CIFAR-100"]:
-        # 3×32×32 RGB, 100 fine-grained classes
-        # Harder than CIFAR-10 — deep plain MLPs with poor init genuinely collapse here
+        # 3×32×32 RGB, 100 fine-grained classes — harder problem, deeper separation needed
         mean, std = (0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)
         T_train = transforms.Compose([
             transforms.RandomCrop(32, padding=4),
@@ -158,70 +94,49 @@ def get_loaders(
             transforms.Normalize(mean, std),
             FlattenT,
         ])
-
         full_train_aug  = datasets.CIFAR100(root=data_dir, train=True,  download=True, transform=T_train)
         full_train_eval = datasets.CIFAR100(root=data_dir, train=True,  download=True, transform=T_eval)
         test_ds         = datasets.CIFAR100(root=data_dir, train=False, download=True, transform=T_eval)
-
         num_classes, input_shape = 100, (3 * 32 * 32,)
 
-        n_val = int(len(full_train_aug) * val_frac)
-        n_tr  = len(full_train_aug) - n_val
-        gen = torch.Generator().manual_seed(SEED)
-        train_idx, val_idx = torch.utils.data.random_split(range(len(full_train_aug)), [n_tr, n_val], generator=gen)
-
-        train_ds = torch.utils.data.Subset(full_train_aug, train_idx.indices)
-        val_ds   = torch.utils.data.Subset(full_train_eval, val_idx.indices)
-
-        train_loader = DataLoader(train_ds, batch_size=batch_train, shuffle=shuffle_train, num_workers=0, pin_memory=False)
-        val_loader   = DataLoader(val_ds,   batch_size=batch_val,   shuffle=False,        num_workers=0, pin_memory=False)
-        test_loader  = DataLoader(test_ds,  batch_size=batch_val,   shuffle=False,        num_workers=0, pin_memory=False)
-        return train_loader, val_loader, test_loader, num_classes, input_shape
-
     elif name == "SVHN":
-        # 3×32×32 RGB digits in the wild
         mean, std = (0.4377, 0.4438, 0.4728), (0.1980, 0.2010, 0.1970)
-        T = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-            FlattenT,  # <---- flatten for MLP
-        ])
-        full_train = datasets.SVHN(root=data_dir, split='train', download=True, transform=T)
-        test_ds    = datasets.SVHN(root=data_dir, split='test',  download=True, transform=T)
+        T = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std), FlattenT])
+        full_train_aug  = datasets.SVHN(root=data_dir, split='train', download=True, transform=T)
+        full_train_eval = full_train_aug
+        test_ds         = datasets.SVHN(root=data_dir, split='test',  download=True, transform=T)
         num_classes, input_shape = 10, (3 * 32 * 32,)
 
     else:
         raise ValueError("Supported datasets: MNIST, FashionMNIST, CIFAR10, CIFAR100, SVHN")
 
-    # default split path for SVHN
-    n_val = int(len(full_train) * val_frac)
-    n_tr  = len(full_train) - n_val
-    gen = torch.Generator().manual_seed(SEED)
-    train_ds, val_ds = random_split(full_train, [n_tr, n_val], generator=gen)
+    n_val = int(len(full_train_aug) * val_frac)
+    n_tr  = len(full_train_aug) - n_val
+    gen   = torch.Generator().manual_seed(SEED)
+    train_idx, val_idx = torch.utils.data.random_split(range(len(full_train_aug)), [n_tr, n_val], generator=gen)
+
+    train_ds = torch.utils.data.Subset(full_train_aug,  train_idx.indices)
+    val_ds   = torch.utils.data.Subset(full_train_eval, val_idx.indices)
 
     train_loader = DataLoader(train_ds, batch_size=batch_train, shuffle=shuffle_train, num_workers=0, pin_memory=False)
-    val_loader   = DataLoader(val_ds,   batch_size=batch_val,   shuffle=False,        num_workers=0, pin_memory=False)
-    test_loader  = DataLoader(test_ds,  batch_size=batch_val,   shuffle=False,        num_workers=0, pin_memory=False)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_val,   shuffle=False,         num_workers=0, pin_memory=False)
+    test_loader  = DataLoader(test_ds,  batch_size=batch_val,   shuffle=False,         num_workers=0, pin_memory=False)
     return train_loader, val_loader, test_loader, num_classes, input_shape
 
 
-# === EXAMPLE USAGE ===
-# Choose one of: "MNIST", "FashionMNIST", "CIFAR10", "SVHN"
-#train_loader, val_loader, test_loader, num_classes, input_shape = get_loaders("CIFAR10") 
-
-
-train_loader, val_loader, test_loader, num_classes, input_shape = get_loaders("MNIST")
-# If your model is an MLP, you can flatten inputs inside your training loop:
-# xb = xb.view(xb.size(0), -1)
-# For CNNs, keep the (C,H,W) shape and just pass xb to the conv net.
-
+train_loader, val_loader, test_loader, num_classes, input_shape = get_loaders("CIFAR100")
+# CIFAR-100: input_shape=(3072,), num_classes=100
 
 # %% ---------- models ----------
+
+# CIFAR-100 architecture: 10 hidden layers tapering from 2048 → 128
+# (3072-dim input, 100 classes — depth amplifies the subsidy benefit)
+HIDDEN_DIMS = [2048, 2048, 1024, 1024, 512, 512, 256, 256, 128, 128]
+NUM_HIDDEN  = len(HIDDEN_DIMS)
+
+
 class AdaptiveThresholdMLP(nn.Module):
-    """
-    3 hidden layers with ThresholdReLU(threshold_i), followed by Linear output.
-    thresholds: list of floats, e.g., [3.0, 2.0, 1.0]
-    """
+    """MLP with per-layer ThresholdReLU gates (Pareto-scheduled thresholds)."""
     def __init__(self, input_dim, hidden_dims, output_dim, thresholds):
         super().__init__()
         assert len(hidden_dims) == len(thresholds)
@@ -240,12 +155,12 @@ class AdaptiveThresholdMLP(nn.Module):
 
     def forward(self, x):
         for layer, thr in zip(self.hidden, self.thresholds):
-            x = layer(x)
-            x = self.act(x, thr)   # gate by layer-specific threshold
-        return self.out(x)         # no activation on last layer
+            x = self.act(layer(x), thr)
+        return self.out(x)
+
 
 class ReLUMlp(nn.Module):
-    """Same architecture, but standard ReLU activations."""
+    """Standard ReLU MLP baseline."""
     def __init__(self, input_dim, hidden_dims, output_dim):
         super().__init__()
         dims = [input_dim] + hidden_dims
@@ -263,9 +178,10 @@ class ReLUMlp(nn.Module):
         for layer in self.hidden:
             x = self.act(layer(x))
         return self.out(x)
-    
+
+
 class LeakyReLUMlp(nn.Module):
-    """Same architecture, but LeakyReLU activations."""
+    """LeakyReLU MLP baseline."""
     def __init__(self, input_dim, hidden_dims, output_dim, negative_slope: float = 0.01):
         super().__init__()
         self.negative_slope = float(negative_slope)
@@ -274,7 +190,6 @@ class LeakyReLUMlp(nn.Module):
         self.out = nn.Linear(dims[-1], output_dim)
         self.act = nn.LeakyReLU(negative_slope=self.negative_slope, inplace=False)
 
-        # Kaiming init tuned for LeakyReLU: set nonlinearity='leaky_relu' and pass 'a'
         for layer in self.hidden:
             nn.init.kaiming_normal_(layer.weight, nonlinearity="leaky_relu", a=self.negative_slope)
             nn.init.zeros_(layer.bias)
@@ -285,6 +200,56 @@ class LeakyReLUMlp(nn.Module):
         for layer in self.hidden:
             x = self.act(layer(x))
         return self.out(x)
+
+
+# ── ResNet (residual MLP) ─────────────────────────────────────────────────────
+
+class ResidualBlock(nn.Module):
+    """
+    One residual block: ReLU( Linear(x) + shortcut(x) ).
+    When in_features == out_features the shortcut is an identity (zero extra params).
+    When they differ a bias-free linear projection aligns the dimensions,
+    matching the ResNet convention for dimension-changing shortcuts.
+    """
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+
+        if in_features != out_features:
+            self.shortcut = nn.Linear(in_features, out_features, bias=False)
+            nn.init.kaiming_normal_(self.shortcut.weight, nonlinearity='linear')
+        else:
+            self.shortcut = nn.Identity()
+
+        nn.init.kaiming_normal_(self.linear.weight, nonlinearity='relu')
+        nn.init.zeros_(self.linear.bias)
+
+    def forward(self, x):
+        return F.relu(self.linear(x) + self.shortcut(x))
+
+
+class ResidualMLP(nn.Module):
+    """
+    10-block residual MLP with the same hidden-dim layout as the other models.
+    Each block: ReLU( W*x + shortcut(x) ), where the shortcut is identity when
+    dims match and a linear projection when they change (same as ResNet-v1).
+    Plain Linear output head — no activation, no residual.
+    """
+    def __init__(self, input_dim, hidden_dims, output_dim):
+        super().__init__()
+        dims = [input_dim] + hidden_dims
+        self.blocks = nn.ModuleList([
+            ResidualBlock(dims[i], dims[i + 1])
+            for i in range(len(dims) - 1)
+        ])
+        self.output_layer = nn.Linear(dims[-1], output_dim)
+        nn.init.kaiming_normal_(self.output_layer.weight, nonlinearity='linear')
+        nn.init.zeros_(self.output_layer.bias)
+
+    def forward(self, x):
+        for block in self.blocks:
+            x = block(x)
+        return self.output_layer(x)
 
 
 # ── SubsidyNet ────────────────────────────────────────────────────────────────
@@ -306,7 +271,7 @@ class DecayScheduler:
 class SubsidyLinearBlock(nn.Module):
     """
     Single hidden layer that tracks activation variance and accepts an
-    additive subsidy value (set by the parent SubsidyMLP) before ReLU.
+    additive subsidy (set by parent SubsidyMLP) before ReLU.
     """
     def __init__(self, in_features, out_features, layer_idx):
         super().__init__()
@@ -316,12 +281,10 @@ class SubsidyLinearBlock(nn.Module):
         nn.init.kaiming_normal_(self.linear.weight, nonlinearity='relu')
         nn.init.zeros_(self.linear.bias)
 
-        # Set by SubsidyMLP.forward() each pass; read here during forward
-        self.subsidy_value = 0.0
-        # Metrics tracked each forward pass
+        self.subsidy_value    = 0.0
         self.activation_variance = 1e-7
         self.mean_squared_length = 0.0
-        self.gradient_norm = 0.0
+        self.gradient_norm    = 0.0
 
     def forward(self, x, apply_subsidy=False):
         z = self.linear(x)
@@ -349,7 +312,7 @@ class SubsidyMLP(nn.Module):
     receive more subsidy.  Gamma decays linearly — call step_epoch(ep) once
     per epoch.  Subsidy is only active during training (model.train()).
     """
-    def __init__(self, input_dim, hidden_dims, output_dim, gamma=10.0, beta=0.01):
+    def __init__(self, input_dim, hidden_dims, output_dim, gamma=50.0, beta=0.01):
         super().__init__()
         self.gamma = float(gamma)
         self.decay_scheduler = DecayScheduler(beta=beta, decay_type='linear')
@@ -396,103 +359,50 @@ class SubsidyMLP(nn.Module):
         }
 
 
-# Re-seed so both start comparably
-
-import math
-from typing import List
+# %% ---------- threshold schedules ----------
 
 def make_threshold_schedule(
     num_layers: int,
     kind: str,
     scale: float = 10.0,
     *,
-    alpha: float = 1.5,     # Pareto shape (>0)
-    lam: float = 0.3,       # Exponential rate (>0)
-    sigma: float = 0.35,    # Normal width (0<sigma<=1, for 'normal')
-    mode: str = "decreasing"  # 'decreasing' (half-normal) or 'centered' bell
+    alpha: float = 1.5,
+    lam: float = 0.3,
+    sigma: float = 0.35,
+    mode: str = "decreasing",
 ) -> List[float]:
-    """
-    Returns a list of length `num_layers` of thresholds for your layers.
-
-    Mapping to absolute thresholds:
-      threshold_i = scale * weight_i
-    With scale=10.0, a normalized weight of 0.1 -> threshold 1.0 (your rule).
-
-    kind in {'pareto', 'exponential', 'normal', 'uniform'}.
-      pareto:      decreasing heavy-head (w_i ∝ 1/(i+1)^alpha), w_0 ≈ 1
-      exponential: decreasing (w_i ∝ exp(-lam * i)), w_0 = 1
-      normal:      if mode='decreasing' → half-normal (peak at layer 0, then down)
-                   if mode='centered'   → bell across depth (not strictly monotone)
-      uniform:     constant across layers
-
-    Tip: You can also multiply the returned list by a global factor if you want
-         to shift all thresholds up or down after the fact.
-    """
-    assert num_layers >= 1, "num_layers must be >= 1"
+    assert num_layers >= 1
     kind = kind.lower()
-
     if num_layers == 1:
         return [scale * 1.0]
 
-    # positions 0..L-1 and normalized 0..1
-    L = num_layers
+    L   = num_layers
     idx = list(range(L))
-    u = [i / (L - 1) for i in idx]  # 0 at first layer → 1 at last layer
+    u   = [i / (L - 1) for i in idx]
 
-    # compute normalized weights in [0, 1] (w_0 ~ 1 for decreasing modes)
     if kind in ("pareto", "powerlaw", "power"):
-        # decreasing Pareto-like: w_i ∝ 1 / (i+1)^alpha
         w = [1.0 / ((i + 1) ** alpha) for i in idx]
-        m = max(w); w = [wi / m for wi in w]  # normalize to max=1
-
+        m = max(w); w = [wi / m for wi in w]
     elif kind in ("exponential", "exp"):
-        # decreasing exponential: w_i ∝ e^{-lam * i}
         w = [math.exp(-lam * i) for i in idx]
         m = max(w); w = [wi / m for wi in w]
-
     elif kind in ("normal", "gaussian"):
         if mode == "decreasing":
-            # half-normal anchored at layer 0: w(u) = exp(-0.5 * (u / sigma)^2)
             w = [math.exp(-0.5 * (ui / max(sigma, 1e-8))**2) for ui in u]
-            m = max(w); w = [wi / m for wi in w]
         elif mode == "centered":
-            # bell centered at middle: w(u) = exp(-0.5 * ((u-0.5)/sigma)^2)
             w = [math.exp(-0.5 * ((ui - 0.5) / max(sigma, 1e-8))**2) for ui in u]
-            m = max(w); w = [wi / m for wi in w]
         else:
             raise ValueError("normal: mode must be 'decreasing' or 'centered'")
-
+        m = max(w); w = [wi / m for wi in w]
     elif kind in ("uniform", "const", "constant"):
         w = [1.0] * L
-
     else:
         raise ValueError("Unknown kind. Use 'pareto', 'exponential', 'normal', or 'uniform'.")
 
-    # map to absolute thresholds via the 0.1->1.0 scale rule
-    thresholds = [scale * wi for wi in w]
-    return thresholds
-# 10 hidden layers tapering from 512 → 16 (MNIST: 784-dim input, 10 classes)
-HIDDEN_DIMS = [512, 256, 256, 128, 128, 64, 64, 32, 32, 16]
-NUM_HIDDEN  = len(HIDDEN_DIMS)
+    return [scale * wi for wi in w]
 
-thresholdsPareto  = make_threshold_schedule(NUM_HIDDEN, "pareto",      scale=4, alpha=1.9)
-thresholdsExpo    = make_threshold_schedule(NUM_HIDDEN, "exponential", scale=4, lam=0.3)
-thresholdsnormal  = make_threshold_schedule(NUM_HIDDEN, "normal",      scale=4, sigma=0.35)
-thresholdsUniform = make_threshold_schedule(NUM_HIDDEN, "uniform",     scale=4)
 
-print("Pareto thresholds: ",  thresholdsPareto)
-print("Expo thresholds:   ",  thresholdsExpo)
-print("Normal thresholds: ",  thresholdsnormal)
-print("Uniform thresholds:",  thresholdsUniform)
-
-torch.manual_seed(SEED)
-thr_model = AdaptiveThresholdMLP(
-    input_dim=input_shape[0], hidden_dims=HIDDEN_DIMS, output_dim=num_classes,
-    thresholds=thresholdsPareto,
-    # thresholds=thresholdsExpo
-    # thresholds=thresholdsnormal
-    # thresholds=thresholdsUniform
-).to(device)
+# %% ---------- model instantiation ----------
 
 torch.manual_seed(SEED)
 relu_model = ReLUMlp(
@@ -507,11 +417,17 @@ leaky_model = LeakyReLUMlp(
 torch.manual_seed(SEED)
 subsidy_model = SubsidyMLP(
     input_dim=input_shape[0], hidden_dims=HIDDEN_DIMS, output_dim=num_classes,
-    gamma=10.0, beta=0.01
+    # gamma=62.5: 25% increase over the previous gamma=50 baseline (scales every epoch's budget by 1.25x)
+    gamma=62.5, beta=0.01,
+).to(device)
+
+torch.manual_seed(SEED)
+resnet_model = ResidualMLP(
+    input_dim=input_shape[0], hidden_dims=HIDDEN_DIMS, output_dim=num_classes
 ).to(device)
 
 # %% ---------- training / eval helpers ----------
-# CrossEntropyLoss for multi-class classification (expects raw logits + Long targets)
+
 loss_fn = nn.CrossEntropyLoss()
 
 def evaluate(model, loader):
@@ -521,16 +437,19 @@ def evaluate(model, loader):
         for xb, yb in loader:
             xb, yb = xb.to(device), yb.to(device)
             logits = model(xb)
-            # yb are class indices (Long) from the DataLoader — CrossEntropyLoss expects that
             loss = loss_fn(logits, yb)
-            total_loss += loss.item() * xb.size(0)
-            # argmax over class dimension to get predicted label
+            total_loss   += loss.item() * xb.size(0)
             total_correct += (logits.argmax(dim=1) == yb).sum().item()
             count += xb.size(0)
     return total_loss / max(count, 1), total_correct / max(count, 1)
 
-def train(model, loader, epochs=50, lr=1e-3, tag="model"):
+
+def train(model, loader, epochs=100, lr=1e-3, tag="model"):
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+    best_val_acc  = 0.0
+    best_val_loss = float('inf')
+    best_tr_acc   = 0.0
+    best_ep       = 0
     for ep in range(1, epochs + 1):
         model.train()
         for xb, yb in loader:
@@ -541,14 +460,24 @@ def train(model, loader, epochs=50, lr=1e-3, tag="model"):
             loss.backward()
             opt.step()
         if ep % 10 == 0 or ep == 1:
-            tr_loss, tr_acc = evaluate(model, train_loader)
+            _, tr_acc = evaluate(model, train_loader)
             va_loss, va_acc = evaluate(model, val_loader)
-            print(f"[{tag}] epoch {ep:03d} | train loss: {tr_loss:.4f} acc: {tr_acc:.3f} | val loss: {va_loss:.4f} acc: {va_acc:.3f}")
+            if va_acc > best_val_acc:
+                best_val_acc  = va_acc
+                best_val_loss = va_loss
+                best_tr_acc   = tr_acc
+                best_ep       = ep
+            print(f"[{tag}] epoch {ep:03d} | best so far → ep {best_ep:03d} | train acc: {best_tr_acc:.3f} | val loss: {best_val_loss:.4f} acc: {best_val_acc:.3f}")
     return model
 
-def train_subsidy(model, loader, epochs=50, lr=1e-3, tag="SubsidyMLP"):
+
+def train_subsidy(model, loader, epochs=100, lr=1e-3, tag="SubsidyMLP"):
     """Training loop for SubsidyMLP — passes apply_subsidy=True and calls step_epoch."""
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+    best_val_acc  = 0.0
+    best_val_loss = float('inf')
+    best_tr_acc   = 0.0
+    best_ep       = 0
     for ep in range(1, epochs + 1):
         model.train()
         for xb, yb in loader:
@@ -561,46 +490,52 @@ def train_subsidy(model, loader, epochs=50, lr=1e-3, tag="SubsidyMLP"):
             opt.step()
         model.step_epoch(ep)
         if ep % 10 == 0 or ep == 1:
-            tr_loss, tr_acc = evaluate(model, train_loader)
+            _, tr_acc = evaluate(model, train_loader)
             va_loss, va_acc = evaluate(model, val_loader)
-            print(f"[{tag}] epoch {ep:03d} | train loss: {tr_loss:.4f} acc: {tr_acc:.3f} | val loss: {va_loss:.4f} acc: {va_acc:.3f} | gamma: {model.gamma:.4f}")
+            if va_acc > best_val_acc:
+                best_val_acc  = va_acc
+                best_val_loss = va_loss
+                best_tr_acc   = tr_acc
+                best_ep       = ep
+            print(f"[{tag}] epoch {ep:03d} | best so far → ep {best_ep:03d} | train acc: {best_tr_acc:.3f} | val loss: {best_val_loss:.4f} acc: {best_val_acc:.3f} | gamma: {model.gamma:.4f}")
     return model
 
+
 # %% ---------- run all ----------
-
-print("Relu_model")
-relu_model = train(relu_model, train_loader, epochs=20, lr=1e-3, tag="ReLU")
-
-print("Thr_model")
-thr_model  = train(thr_model,  train_loader, epochs=20, lr=1e-3, tag="ThresholdReLU[3,2,1]")
-
-print("Leaky Relu Model")
-leaky_model = train(leaky_model, train_loader, epochs=20, lr=1e-3, tag="LeakyReLU[0.01]")
+# Order: SubsidyMLP → ResidualMLP → ReLU → LeakyReLU
 
 print("SubsidyMLP")
-subsidy_model = train_subsidy(subsidy_model, train_loader, epochs=20, lr=1e-3, tag="SubsidyMLP")
+subsidy_model = train_subsidy(subsidy_model, train_loader, epochs=100, lr=1e-3, tag="SubsidyMLP")
+
+print("ResidualMLP")
+resnet_model = train(resnet_model, train_loader, epochs=100, lr=1e-3, tag="ResidualMLP")
+
+print("ReLU model")
+relu_model = train(relu_model, train_loader, epochs=100, lr=1e-3, tag="ReLU")
+
+print("LeakyReLU model")
+leaky_model = train(leaky_model, train_loader, epochs=100, lr=1e-3, tag="LeakyReLU[0.01]")
 
 # %% ---------- final comparison ----------
 
-thr_loss,     thr_acc     = evaluate(thr_model,     val_loader)
+subsidy_loss, subsidy_acc = evaluate(subsidy_model, val_loader)
+resnet_loss,  resnet_acc  = evaluate(resnet_model,  val_loader)
 relu_loss,    relu_acc    = evaluate(relu_model,    val_loader)
 leaky_loss,   leaky_acc   = evaluate(leaky_model,   val_loader)
-subsidy_loss, subsidy_acc = evaluate(subsidy_model, val_loader)
 
-print("\nFinal validation (CrossEntropy loss / accuracy):")
-print(f"  ThresholdReLU (Pareto): loss={thr_loss:.4f}  acc={thr_acc:.3f}")
-print(f"  ReLU:                   loss={relu_loss:.4f}  acc={relu_acc:.3f}")
-print(f"  LeakyReLU[0.01]:        loss={leaky_loss:.4f}  acc={leaky_acc:.3f}")
-print(f"  SubsidyMLP:             loss={subsidy_loss:.4f}  acc={subsidy_acc:.3f}")
+print("\nFinal validation on CIFAR-100 (CrossEntropy loss / accuracy):")
+print(f"  SubsidyMLP:       loss={subsidy_loss:.4f}  acc={subsidy_acc:.3f}")
+print(f"  ResidualMLP:      loss={resnet_loss:.4f}  acc={resnet_acc:.3f}")
+print(f"  ReLU:             loss={relu_loss:.4f}  acc={relu_acc:.3f}")
+print(f"  LeakyReLU[0.01]:  loss={leaky_loss:.4f}  acc={leaky_acc:.3f}")
 
-# Sample predictions - pull a real batch from the test loader so dimensions match
-thr_model.eval(); relu_model.eval(); leaky_model.eval(); subsidy_model.eval()
+# Sample predictions from the test set
+subsidy_model.eval(); resnet_model.eval(); relu_model.eval(); leaky_model.eval()
 xb_sample, yb_sample = next(iter(test_loader))
 xb_sample = xb_sample[:5].to(device)
 with torch.no_grad():
-    # argmax over class logits gives the predicted digit
-    print("\nSample predicted classes (ThresholdReLU):", thr_model(xb_sample).argmax(dim=1).tolist())
+    print("\nSample predicted classes (SubsidyMLP):   ", subsidy_model(xb_sample).argmax(dim=1).tolist())
+    print("Sample predicted classes (ResidualMLP):  ", resnet_model(xb_sample).argmax(dim=1).tolist())
     print("Sample predicted classes (ReLU):         ", relu_model(xb_sample).argmax(dim=1).tolist())
     print("Sample predicted classes (LeakyReLU):    ", leaky_model(xb_sample).argmax(dim=1).tolist())
-    print("Sample predicted classes (SubsidyMLP):   ", subsidy_model(xb_sample).argmax(dim=1).tolist())
     print("True labels:                             ", yb_sample[:5].tolist())
