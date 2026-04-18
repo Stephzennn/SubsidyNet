@@ -1,0 +1,17 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Downloaded datasets
+data/
+
+# Editor settings
+.vscode/
+
+# Checkpoints and saved models
+*.pth
+*.pt
+
+# Results CSVs (generated at runtime)
+results/
